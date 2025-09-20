@@ -1,0 +1,7 @@
+{
+    "api_key": "在这里粘贴你从 Google AI Studio 获取的 Gemini API Key",
+    "proxy_url": "http://127.0.0.1:7890 <- 请确认这个端口！",
+    "hotkey": "shift+cmd+d",
+    "model_name": "gemini-2.5-flash-lite",
+    "initial_prompt": "将图中的文本信息提取出来，并翻译成中文。如果图中是代码，分析其功能。如果是终端log，分析报错原因。如果都不是，就分析图片内容。用中文对话。"
+}
