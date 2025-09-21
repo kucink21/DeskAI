@@ -12,7 +12,7 @@ pack_venv/
 *.spec
 build/
 dist/
-/run-*
+/run*
 /v1-1
 /historic_releases
 
