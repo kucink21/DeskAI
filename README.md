@@ -10,10 +10,13 @@
 ---
 ## ✨ 功能演示
 
-#### 场景一：使用快捷截图进行翻译/识别/代码
+#### 场景一：使用悬浮球分析文件/文本/快速开启会话
+![Reading Demo](https://raw.githubusercontent.com/michaelz9436/GeminiScreenHelper/main/assets/demo3.gif)
+
+#### 场景二：使用快捷截图进行翻译/识别/代码
 ![Reading Demo](https://raw.githubusercontent.com/michaelz9436/GeminiScreenHelper/main/assets/merged_demo1.gif)
 
-#### 场景二：使用剪贴板内容快捷翻译/识别
+#### 场景三：使用剪贴板内容快捷翻译/识别
 ![Coding Demo](https://raw.githubusercontent.com/michaelz9436/GeminiScreenHelper/main/assets/merged_demo2.gif)
 
 ---
