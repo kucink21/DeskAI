@@ -246,14 +246,21 @@ class ResultWindow(tk.Toplevel):
             try:
                 content_parts = [self.initial_prompt]
                 
-                # 根据任务类型准备请求内容
-                if self.task_type == 'image':
+                # --- 修改这里的逻辑 ---
+                if self.task_type == 'image': # 来自截图
                     image_path = self.task_data
                     if not os.path.exists(image_path):
                         raise FileNotFoundError(f"找不到截图文件: {image_path}")
                     self.loaded_image = Image.open(image_path)
                     content_parts.append(self.loaded_image)
                 
+                elif self.task_type == 'image_from_path': # 来自文件拖放
+                    image_path = self.task_data
+                    if not os.path.exists(image_path):
+                        raise FileNotFoundError(f"找不到图片文件: {image_path}")
+                    self.loaded_image = Image.open(image_path)
+                    content_parts.append(self.loaded_image)
+
                 elif self.task_type == 'text':
                     clipboard_text = self.task_data
                     # --- 新增逻辑 ---
@@ -465,7 +472,7 @@ class ResultWindow(tk.Toplevel):
             
             # 动态构建聊天历史
             history_user_parts = [self.initial_prompt]
-            if self.task_type == 'image' and self.loaded_image:
+            if self.task_type in ['image', 'image_from_path'] and self.loaded_image:
                 history_user_parts.append(self.loaded_image)
             elif self.task_type == 'text':
                 history_user_parts.append(self.task_data)

@@ -14,7 +14,7 @@ from .utils import log, set_proxy, configure_gemini, get_screen_scaling_factor
 
 # 主控制器 
 class MainController:
-    def __init__(self):
+    def __init__(self, root):
         log("[LOG-C1] MainController 初始化。")
         self.config_manager = ConfigManager()
         self.config = None
@@ -23,7 +23,7 @@ class MainController:
         self.current_pressed = set()
         self.hotkey_actions = {} 
         self.is_running_action = False
-        self.root = None
+        self.root = root
         self.floating_ball = None
         self.tray_icon = None
 
@@ -172,13 +172,13 @@ class MainController:
         self.floating_ball = FloatingBall(
             master=self.root,
             on_start_chat_callback=self.start_temporary_chat,
-            on_hide_callback=self.hide_ball_to_tray
+            on_hide_callback=self.hide_ball_to_tray,
+            on_drop_callback=self.handle_drop_data # <--- 新增这一行
         )
         self.tray_icon = TrayIcon(
             on_show_callback=self.show_ball_from_tray,
             on_exit_callback=self.exit_app
         )
-        # 首次不启动托盘，因为悬浮球是可见的
 
     def start_temporary_chat(self):
         """由悬浮球触发，启动一个临时的纯文本聊天"""
@@ -253,8 +253,8 @@ class MainController:
     def run(self):
         """启动主程序"""
         log("[LOG-C3] MainController.run() 启动。")
-        self.root = tk.Tk()
-        self.root.withdraw()
+        # self.root = tk.Tk() <--- 删除
+        # self.root.withdraw() <--- 删除
         
         self.config = self.config_manager.load_config()
 
@@ -268,12 +268,12 @@ class MainController:
 
         if not self.setup_from_config():
             return
+
         log("正在创建悬浮球和系统托盘...")
         self.create_widgets()
 
         log("Gemini助手已启动，在后台等待快捷键...")
         log("已注册的快捷键动作如下:")
-        # 从 self.config 中读取 actions，以获取原始的 hotkey 字符串用于显示
         actions_config = self.config.get("actions", {})
         for name in self.hotkey_actions.keys():
             hotkey_str = actions_config.get(name, {}).get("hotkey", "未知")
@@ -282,13 +282,10 @@ class MainController:
         listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release)
         listener.start()
         
+        # 我们需要在 run 的最后确保 WM_DELETE_WINDOW 协议被设置
+        self.root.protocol("WM_DELETE_WINDOW", self.exit_app)
         self.root.mainloop()
 
-    def show_error_and_exit(self, message):
-        """显示一个错误消息框，然后退出程序"""
-        log(f"启动错误: {message.replace(os.linesep, ' ')}")
-        messagebox.showerror("启动错误", message)
-        if self.root: self.root.destroy()
 
     def start_screenshot_flow(self):
         """处理截图的流程"""
@@ -330,3 +327,88 @@ class MainController:
         self.is_running_action = False
         window.destroy()
         log("返回待机状态。")
+
+    def handle_drop_data(self, data):
+        """
+        拖放数据的总入口和调度中心。
+        """
+        if self.is_running_action:
+            messagebox.showwarning("忙碌中", "请等待上一个任务完成。")
+            return
+
+        # 清理数据，移除可能的 {}
+        cleaned_data = data.strip()
+        if cleaned_data.startswith('{') and cleaned_data.endswith('}'):
+            cleaned_data = cleaned_data[1:-1]
+
+        # 判断是文件路径还是纯文本
+        if os.path.exists(cleaned_data):
+            self.process_dropped_files([cleaned_data])
+        else:
+            self.process_dropped_text(data)
+
+    def process_dropped_text(self, text_content):
+        """处理拖放的纯文本"""
+        log("处理拖放的纯文本...")
+        self.is_running_action = True
+        
+        action_config = self.config["actions"].get("clipboard_text", {})
+        prompt = action_config.get("prompt", "请处理以下文本:")
+        
+        self.show_result_window(
+            prompt=prompt,
+            task_type="text",
+            task_data=text_content
+        )
+        
+    def process_dropped_files(self, filepaths):
+        """处理拖放的文件列表"""
+        if not filepaths:
+            return
+            
+        filepath = filepaths[0]
+        log(f"处理拖放的文件: {filepath}")
+        self.is_running_action = True
+
+        ext = os.path.splitext(filepath)[1].lower()
+        
+        if ext in ['.png', '.jpg', '.jpeg', '.bmp', '.webp']:
+            self.handle_dropped_image(filepath)
+        elif ext in ['.txt', '.md', '.py', '.json', '.html', '.css', '.js']:
+            self.handle_dropped_text_file(filepath)
+        else:
+            unsupported_message = f"不支持的文件类型: {ext}\n\n当前支持图片和纯文本文件。"
+            log(unsupported_message)
+            self.is_running_action = False
+            messagebox.showinfo("操作失败", unsupported_message)
+
+    def handle_dropped_image(self, filepath):
+        """具体处理图片文件的逻辑"""
+        action_config = self.config["actions"].get("screenshot", {})
+        prompt = action_config.get("prompt", "请描述这张图片:")
+        
+        self.show_result_window(
+            prompt=prompt,
+            task_type="image_from_path",
+            task_data=filepath
+        )
+
+    def handle_dropped_text_file(self, filepath):
+        """具体处理文本文件的逻辑"""
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                content = f.read()
+        except Exception as e:
+            log(f"读取文件失败: {filepath}, 错误: {e}")
+            messagebox.showerror("读取失败", f"无法读取文件内容:\n{e}")
+            self.is_running_action = False
+            return
+            
+        action_config = self.config["actions"].get("clipboard_text", {})
+        prompt = action_config.get("prompt", "请分析以下文件内容:")
+        
+        self.show_result_window(
+            prompt=prompt,
+            task_type="text",
+            task_data=content
+        )

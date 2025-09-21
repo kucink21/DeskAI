@@ -6,6 +6,8 @@ import sys
 import customtkinter as ctk
 from PIL import Image, ImageTk, ImageDraw
 import math
+from tkinterdnd2 import DND_FILES, DND_TEXT
+from core.utils import log
 
 # 导入Windows API相关的库
 try:
@@ -19,10 +21,11 @@ except ImportError:
 
 
 class FloatingBall:
-    def __init__(self, master, on_start_chat_callback, on_hide_callback):
+    def __init__(self, master, on_start_chat_callback, on_hide_callback, on_drop_callback):
         self.master = master
         self.on_start_chat_callback = on_start_chat_callback
         self.on_hide_callback = on_hide_callback
+        self.on_drop_callback = on_drop_callback
         
         self.ball_size = 120  # 保持尺寸
 
@@ -35,7 +38,8 @@ class FloatingBall:
         self.transparent_color = '#abcdef'
         self.window.config(bg=self.transparent_color)
         self.window.wm_attributes("-transparentcolor", self.transparent_color)
-
+        self.window.drop_target_register(DND_FILES, DND_TEXT)
+        self.window.dnd_bind('<<Drop>>', self.handle_drop)
         if getattr(sys, 'frozen', False):
             base_path = sys._MEIPASS
         else:
@@ -91,6 +95,16 @@ class FloatingBall:
 
         # 启动第一个待机计时器
         self.reset_idle_timer()
+
+    def handle_drop(self, event):
+        """处理拖放事件，并将数据传递给主控制器"""
+        log(f"悬浮球接收到拖放数据: {event.data}")
+        # 重置待机计时器，因为这也是一种交互
+        self.reset_idle_timer()
+
+        # 调用主控制器传递过来的回调函数进行处理
+        if self.on_drop_callback:
+            self.on_drop_callback(event.data)
 
     def create_canvas_image(self):
         """如果PNG不存在，用Pillow在内存中创建一个图像"""
