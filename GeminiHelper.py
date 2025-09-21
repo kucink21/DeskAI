@@ -81,12 +81,12 @@ def set_proxy(config_proxy_url):
     """
     final_proxy = None
     
-    #检查用户是否在 config.json 中强制指定了代理
+    # 1. 检查用户是否在 config.json 中强制指定了代理
     if config_proxy_url:
         log(f"用户在 config.json 中指定了代理: {config_proxy_url}")
         final_proxy = config_proxy_url
     else:
-        # 如果用户未指定，则尝试自动检测系统代理
+        # 2. 如果用户未指定，则尝试自动检测系统代理
         log("尝试自动检测系统代理...")
         try:
             # 使用 urllib.request.getproxies() 这个 Python 内置的功能来获取系统代理
@@ -258,7 +258,7 @@ class ResultWindow(tk.Toplevel):
             return
             
         log("API 调用超时！")
-        # 直接调用更新函数来显示错误
+        # 直接调用我们的UI更新函数来显示错误
         error_message = (
             "请求超时。\n\n"
             "这通常由以下原因导致：\n"
@@ -277,7 +277,7 @@ class ResultWindow(tk.Toplevel):
             fg_color="#F5F5F5",   # 内部背景
             corner_radius=15,     # 圆角
             border_width=2,
-            border_color="#B0B3B9"  # 边框颜色
+            border_color="#B0B3B9"  # 边框颜色（浅灰）
         )
         main_frame.pack(fill="both", expand=True, padx=15, pady=15)
         
@@ -304,8 +304,8 @@ class ResultWindow(tk.Toplevel):
             input_frame,
             text="➤ 发送",
             font=("微软雅黑", 12, "bold"),
-            width=80,        # 宽度
-            height=40,       # 和输入框一致
+            width=80,        # 这里改宽度，不要太小
+            height=40,       # 关键：设为和输入框一致
             fg_color="#2563EB",    # 背景色
             hover_color="#0E2B88", # 悬停颜色
             text_color="white",    # 字体颜色
@@ -452,7 +452,7 @@ class ResultWindow(tk.Toplevel):
         # 先不禁用文本框，等打字机结束后再禁用
 
     def start_typewriter(self, markdown_text):
-        """解析Markdown，准备数据，并启动打字机效果"""
+        """解析Markdown，准备数据，并启动智能打字机效果"""
         import re
         
         # 1. 解析Markdown文本，生成带标签的片段列表 (segments)
@@ -473,35 +473,68 @@ class ResultWindow(tk.Toplevel):
                         segments.append((line + "\n", None))
 
         # 2. 启动打字机效果
-        char_list = []
-        for text, tag in segments:
-            for char in text:
-                char_list.append((char, tag))
-        
-        # 启动递归调用
-        self._typewriter_step(char_list)
+        self._typewriter_step(segments)
 
-    def _typewriter_step(self, char_list, index=0):
-        """打字机的核心函数，一次处理一个字符"""
-        if index < len(char_list):
-            char, tag = char_list[index]
-            
-            # 插入带标签的字符
-            if tag:
-                self.text_area.insert(tk.END, char, tag)
-            else:
-                self.text_area.insert(tk.END, char)
-            
-            # 滚动到底部
-            self.text_area.see(tk.END)
-            delay = 6
-            self.typewriter_job = self.after(delay, self._typewriter_step, char_list, index + 1)
-        else:
-            # 所有字符都已显示完毕
+    def _typewriter_step(self, segments, segment_index=0, char_index=0):
+        """智能打字机的核心函数，一次处理一“块”字符"""
+        
+        # --- 检查是否完成 ---
+        if segment_index >= len(segments):
+            # 所有片段都已显示完毕
             self.typewriter_job = None
-            # 重新处理加粗（在全部文本显示后处理）
             self.apply_bold_tags()
-            self.text_area.config(state=tk.DISABLED) # 在这里才禁用文本框
+            self.text_area.config(state=tk.DISABLED)
+            return
+
+        # --- 获取当前要处理的片段 ---
+        text, tag = segments[segment_index]
+        
+        # --- 核心优化：分块显示 ---
+        chunk_size = 3 # 一次显示3个字符
+        
+        # 如果是代码块，一次性显示整块，因为它不需要打字机效果
+        if tag == "md_code":
+            chunk_size = len(text)
+            
+        end_of_chunk = min(char_index + chunk_size, len(text))
+        chunk = text[char_index:end_of_chunk]
+
+        # --- 插入带标签的块 ---
+        if chunk:
+            if tag:
+                self.text_area.insert(tk.END, chunk, tag)
+            else:
+                self.text_area.insert(tk.END, chunk)
+            self.text_area.see(tk.END)
+
+        # --- 计算下一步 ---
+        next_char_index = end_of_chunk
+        next_segment_index = segment_index
+
+        if next_char_index >= len(text):
+            # 当前片段已显示完，移动到下一个片段
+            next_segment_index += 1
+            next_char_index = 0
+            
+        # --- 核心优化：动态延迟 ---
+        delay = 2 # 基础延迟
+        
+        # 如果文本很长，加快后续速度
+        total_len = sum(len(s[0]) for s in segments)
+        if total_len > 300:
+            # 已经显示了超过1/3后，速度翻倍（延迟减半）
+            current_len = sum(len(s[0]) for s in segments[:segment_index]) + char_index
+            if current_len > total_len / 3:
+                delay = 1
+
+        # --- 安排下一步 ---
+        self.typewriter_job = self.after(
+            delay, 
+            self._typewriter_step, 
+            segments, 
+            next_segment_index, 
+            next_char_index
+        )
 
     def apply_bold_tags(self):
         """在文本完全显示后，查找并应用加粗标签"""
@@ -702,8 +735,8 @@ class MainController:
 
 
 if __name__ == "__main__":
-    # 创建任何Tkinter窗口之前，先声明进程的DPI感知级别
-    # 告诉Windows不要对我们的窗口进行DPI虚拟化
+    # 在创建任何Tkinter窗口之前，先声明进程的DPI感知级别
+    # 这会告诉Windows不要对我们的窗口进行DPI虚拟化
     try:
         ctypes.windll.shcore.SetProcessDpiAwarenessContext(-2)
         log("DPI感知级别已设置为 Per Monitor Aware。")
