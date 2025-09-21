@@ -9,8 +9,10 @@ import sys
 import threading
 import ctypes
 from pynput import keyboard
-import time 
 import json 
+import urllib.request
+import logging
+import customtkinter as ctk
 
 class ConfigManager:
     def __init__(self, filename="config.json"):
@@ -28,18 +30,88 @@ class ConfigManager:
             log(f"fail to load config: {e}")
             return None 
         
-def log(message):
-    timestamp = time.strftime("%H:%M:%S", time.localtime())
-    thread_id = threading.get_ident()
-    print(f"[{timestamp}][Thread:{thread_id}] {message}")
-
-def set_proxy(proxy_url): # <<--- 接收参数
-    if proxy_url:
-        os.environ['HTTP_PROXY'] = proxy_url
-        os.environ['HTTPS_PROXY'] = proxy_url
-        log(f"proxy set: {proxy_url}")
+def setup_logging():
+    """配置日志系统，使其同时输出到控制台和文件"""
+    
+    # 确定日志文件的路径
+    if getattr(sys, 'frozen', False):
+        app_dir = os.path.dirname(sys.executable)
     else:
-        log("no proxy set")
+        app_dir = os.path.dirname(__file__)
+    log_filepath = os.path.join(app_dir, "log.txt")
+
+    # 1. 获取根 logger
+    # 我们直接配置根 logger，这样所有地方调用 logging.info 都会生效
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO) # 设置日志记录的最低级别
+
+    # 2. 清除任何可能已经存在的处理器，防止日志重复
+    if logger.hasHandlers():
+        logger.handlers.clear()
+
+    # 3. 创建格式化器
+    # 定义日志的格式：[时间戳][线程ID] 日志消息
+    formatter = logging.Formatter('[%(asctime)s][Thread:%(thread)d] %(message)s', datefmt='%H:%M:%S')
+
+    # 4. 创建并配置 StreamHandler (用于输出到控制台)
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
+    # 5. 创建并配置 FileHandler (用于输出到文件)
+    try:
+        file_handler = logging.FileHandler(log_filepath, mode='w', encoding='utf-8')
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+    except Exception as e:
+        # 如果因为权限等问题无法创建日志文件，在控制台打印错误
+        print(f"无法创建日志文件: {e}")
+
+setup_logging()
+
+# 一个全局的、易于使用的 log 函数
+def log(message):
+    """全局日志函数，使用 logging.info"""
+    logging.info(message)
+
+def set_proxy(config_proxy_url):
+    """
+    智能设置代理。
+    优先级：用户在 config.json 中明确指定的代理 > 系统代理 > 无代理
+    """
+    final_proxy = None
+    
+    #检查用户是否在 config.json 中强制指定了代理
+    if config_proxy_url:
+        log(f"用户在 config.json 中指定了代理: {config_proxy_url}")
+        final_proxy = config_proxy_url
+    else:
+        # 如果用户未指定，则尝试自动检测系统代理
+        log("尝试自动检测系统代理...")
+        try:
+            # 使用 urllib.request.getproxies() 这个 Python 内置的功能来获取系统代理
+            system_proxies = urllib.request.getproxies()
+            # 优先获取 https 代理，其次是 http
+            http_proxy = system_proxies.get('https') or system_proxies.get('http')
+            
+            if http_proxy:
+                log(f"成功检测到系统代理: {http_proxy}")
+                final_proxy = http_proxy
+            else:
+                log("未检测到系统代理。")
+        except Exception as e:
+            log(f"自动检测系统代理时发生错误: {e}")
+
+    # 3. 如果找到了代理，则设置环境变量
+    if final_proxy:
+        if not final_proxy.startswith(('http://', 'https://')):
+            final_proxy = 'http://' + final_proxy
+
+        os.environ['HTTP_PROXY'] = final_proxy
+        os.environ['HTTPS_PROXY'] = final_proxy
+        log(f"最终生效的代理已设置为: {final_proxy}")
+    else:
+        log("最终未设置代理，将进行直接连接。")
 
 def configure_gemini(api_key, model_name): 
     try:
@@ -171,35 +243,83 @@ class ResultWindow(tk.Toplevel):
         self.screenshot_path = os.path.join(self.config_manager.app_dir, "temp_screenshot.png")
         self.chat_session = None
         self.loaded_image = None
+        self.timeout_job = None
+        self.typewriter_job = None 
         
         self.setup_ui()
         
         threading.Thread(target=self.process_image_and_get_response, daemon=True).start()
 
+    def on_timeout(self):
+        """当API调用超时时，由主线程的定时器调用"""
+        # 检查一下，确保任务真的还在运行（防止极小概率的竞争）
+        # 如果 self.timeout_job 为 None，说明任务已经正常完成了，直接返回
+        if self.timeout_job is None:
+            return
+            
+        log("API 调用超时！")
+        # 直接调用更新函数来显示错误
+        error_message = (
+            "请求超时。\n\n"
+            "这通常由以下原因导致：\n"
+            "1. 网络连接问题。\n"
+            "2. 代理设置错误 (端口不匹配或代理服务器无响应)。\n"
+            "3. 防火墙阻止了连接。"
+        )
+        self._update_ui(error=error_message)
 
     def setup_ui(self):
-        self.title("Gemini 识别结果--你可以发送消息继续这个聊天")
+        self.title(" Gemini 识别结果 --> 你可以发送消息继续这个聊天 :) ")
         self.geometry("1200x1050")
         
-        main_frame = tk.Frame(self)
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        main_frame = ctk.CTkFrame(
+            self,
+            fg_color="#F5F5F5",   # 内部背景
+            corner_radius=15,     # 圆角
+            border_width=2,
+            border_color="#B0B3B9"  # 边框颜色
+        )
+        main_frame.pack(fill="both", expand=True, padx=15, pady=15)
         
         input_frame = tk.Frame(main_frame)
         input_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(10, 0))
 
-        self.entry = tk.Entry(input_frame, font=("微软雅黑", 14))
+        self.entry = ctk.CTkEntry(
+            input_frame,
+            placeholder_text=" >> 发送消息以继续临时聊天 << ",
+            font=("微软雅黑", 14),
+            width=400,
+            height=40,
+            corner_radius=12,    # 圆角
+            fg_color="#F5F5F5",  # 背景
+            text_color="#333333"
+        )
+        self.entry.insert(0, " >> 发送消息以继续临时聊天 << ")
+        self.entry.bind("<FocusIn>", lambda e: self.entry.delete(0, "end"))
+
         self.entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=5)
         self.entry.bind("<Return>", self.send_follow_up_question)
 
-        self.send_button = tk.Button(input_frame, text="发送", font=("微软雅黑", 11), command=self.send_follow_up_question)
-        self.send_button.pack(side=tk.RIGHT, padx=(10, 0), ipady=4, ipadx=5)
+        self.send_button = ctk.CTkButton(
+            input_frame,
+            text="➤ 发送",
+            font=("微软雅黑", 12, "bold"),
+            width=80,        # 宽度
+            height=40,       # 和输入框一致
+            fg_color="#2563EB",    # 背景色
+            hover_color="#0E2B88", # 悬停颜色
+            text_color="white",    # 字体颜色
+            corner_radius=12,      # 圆角半径
+            command=self.send_follow_up_question
+        )
+        self.send_button.pack(pady=5)
         
         self.text_area = scrolledtext.ScrolledText(
             main_frame, 
             wrap=tk.WORD, 
             font=("微软雅黑", 12),
-            bg="#102A78", 
-            fg="#ffffff",          
+            bg="#F5F5F5", 
+            fg="#333333",          
             insertbackground="white", 
             borderwidth=0, 
             highlightthickness=2,
@@ -210,11 +330,11 @@ class ResultWindow(tk.Toplevel):
         self.text_area.config(state=tk.DISABLED)
         self.text_area.tag_config(
             "user_tag", 
-            foreground="#43BDF1") 
+            foreground="#AD3430") 
         
         self.text_area.tag_config(
             "model_tag", 
-            foreground="#33EB43" 
+            foreground="#194CBA" 
         )
 
         bold_font = ("微软雅黑", 12, "bold")
@@ -239,27 +359,45 @@ class ResultWindow(tk.Toplevel):
 
     def process_image_and_get_response(self):
         if not os.path.exists(self.screenshot_path):
-            self.display_message("错误：找不到截图文件。")
+            # 使用 lambda 包装
+            self.after(0, lambda: self._update_ui(error="找不到截图文件。"))
             return
 
+        # 在主线程里显示“正在分析”，这是安全的
         self.display_message("正在分析图片...\n")
         self.attributes('-topmost', True); self.focus_force(); self.attributes('-topmost', False)
         
-        try:
-            self.loaded_image = Image.open(self.screenshot_path)
-            response = self.model.generate_content([self.initial_prompt, self.loaded_image])
-            initial_response_text = response.text.strip()
+        # 1. 设置一个15秒后会“爆炸”的定时器
+        timeout_seconds = 12
+        self.timeout_job = self.after(timeout_seconds * 1000, self.on_timeout)
+        log(f"已设置 {timeout_seconds} 秒的API调用超时定时器。")
+
+        # 2. 定义一个在后台线程中运行的真正的工作函数
+        def background_task():
+            try:
+                self.loaded_image = Image.open(self.screenshot_path)
+                # 我们依然保留库自带的timeout，作为第一道防线
+                response = self.model.generate_content(
+                    [self.initial_prompt, self.loaded_image],
+                    request_options={"timeout": timeout_seconds} 
+                )
+                result_text = response.text.strip()
+                result_error = None
+            except Exception as e:
+                result_text = None
+                result_error = e
             
-            self.text_area.config(state=tk.NORMAL); self.text_area.delete('1.0', tk.END); self.text_area.config(state=tk.DISABLED)
-            self.display_message(initial_response_text, is_model=True)
+            # 3. 无论成功还是失败，工作完成后，先拆除“炸弹”
+            if self.timeout_job:
+                self.after_cancel(self.timeout_job)
+                self.timeout_job = None
+                log("API调用已完成，超时定时器已取消。")
             
-            self.chat_session = self.model.start_chat(history=[
-                {'role': 'user', 'parts': [self.initial_prompt, self.loaded_image]},
-                {'role': 'model', 'parts': [initial_response_text]}
-            ])
-            self.enable_input()
-        except Exception as e:
-            self.display_message(f"\n发生错误: {e}")
+            # 4. 将结果调度回主线程
+            self.after(0, lambda: self._update_ui(text=result_text, error=result_error))
+
+        # 5. 启动后台线程
+        threading.Thread(target=background_task, daemon=True).start()
     
     def send_follow_up_question(self, event=None):
         question = self.entry.get().strip()
@@ -271,80 +409,144 @@ class ResultWindow(tk.Toplevel):
 
     def _send_and_display(self, question):
         try:
-            response = self.chat_session.send_message(question)
-            
-            self.display_message("", is_model=True) 
-            self.apply_markdown(response.text.strip())
-
-        except Exception as e: 
-            self.display_message(f"\n发生错误: {e}")
-        finally: 
-            self.enable_input()
+            # 网络操作
+            response = self.chat_session.send_message(
+                question,
+                request_options={"timeout": 15}
+            )            
+            # 将结果调度回主线程
+            self.after(0, self.display_message, response.text.strip(), False, True)
         
-    def enable_input(self): self.entry.config(state=tk.NORMAL); self.send_button.config(state=tk.NORMAL)
-    def disable_input(self): self.entry.config(state=tk.DISABLED); self.send_button.config(state=tk.DISABLED)
+        except Exception as e:
+            # 将错误调度回主线程
+            self.after(0, self.display_message, f"\n发生错误: {e}")
+        finally:
+            # 将UI操作调度回主线程
+            self.after(0, self.enable_input)
+        
+    def enable_input(self): self.entry.configure(state=tk.NORMAL); self.send_button.configure(state=tk.NORMAL)
+    def disable_input(self): self.entry.configure(state=tk.DISABLED); self.send_button.configure(state=tk.DISABLED)
     def display_message(self, message, is_user=False, is_model=False):
+        """
+        在文本框中格式化并显示信息。
+        如果是模型回复，则启动打字机效果。
+        """
+        # 如果有正在进行的打字机效果，先取消它
+        if self.typewriter_job:
+            self.after_cancel(self.typewriter_job)
+            self.typewriter_job = None
+
         self.text_area.config(state=tk.NORMAL)
         
         if is_user:
             self.text_area.insert(tk.END, f"\n\n[用户说]: \n", "user_tag")
             self.text_area.insert(tk.END, f"{message}\n")
         elif is_model:
-            self.text_area.insert(tk.END, f"\n[Gemini]: \n", "model_tag") 
-            if message: 
-                 self.apply_markdown(message)
+            self.text_area.insert(tk.END, f"\n[Gemini]: \n", "model_tag")
+            if message:
+                self.start_typewriter(message) #启动打字机
         else:
             self.text_area.insert(tk.END, message)
             
         self.text_area.see(tk.END)
-        self.text_area.config(state=tk.DISABLED)
+        # 先不禁用文本框，等打字机结束后再禁用
 
-
-    def apply_markdown(self, markdown_text):
-        """解析简单的Markdown并应用标签（最终优雅版）"""
+    def start_typewriter(self, markdown_text):
+        """解析Markdown，准备数据，并启动打字机效果"""
         import re
-        self.text_area.config(state=tk.NORMAL)
-
+        
+        # 1. 解析Markdown文本，生成带标签的片段列表 (segments)
+        segments = []
         parts = re.split(r"(```.*?```)", markdown_text, flags=re.DOTALL)
         
         for part in parts:
             if part.startswith("```"):
                 code_content = part.strip("`\n")
-                if not self.text_area.get(f"{self.text_area.index(tk.INSERT)} -1c", tk.INSERT) == "\n":
-                    self.text_area.insert(tk.INSERT, "\n")
-                
-                self.text_area.insert(tk.INSERT, code_content, "md_code")
-                self.text_area.insert(tk.INSERT, "\n")
+                segments.append(("\n" + code_content + "\n", "md_code"))
             else:
                 for line in part.split('\n'):
-                    start_of_line = self.text_area.index(tk.INSERT)
-
                     list_match = re.match(r"^\s*\* (.*)", line)
                     if list_match:
                         content = list_match.group(1)
-                        self.text_area.insert(tk.INSERT, f"• {content}")
-                        self.text_area.tag_add("md_list", start_of_line, self.text_area.index(tk.INSERT))
+                        segments.append((f"• {content}\n", "md_list"))
                     else:
-                        self.text_area.insert(tk.INSERT, line)
+                        segments.append((line + "\n", None))
 
-                    end_of_line = self.text_area.index(tk.INSERT)
-                    line_text = self.text_area.get(start_of_line, end_of_line)
-                    
-                    offset = 0
-                    for bold_match in re.finditer(r"\*\*(.*?)\*\*", line_text):
-                        clean_text = bold_match.group(1)
-                        
-                        tag_start_index = self.text_area.index(f"{start_of_line}+{bold_match.start() - offset}c")
-                        tag_end_index = self.text_area.index(f"{start_of_line}+{bold_match.end() - offset}c")
-                        
-                        self.text_area.delete(tag_start_index, tag_end_index)
-                        self.text_area.insert(tag_start_index, clean_text, "md_bold")
-                        
-                        offset += 4
+        # 2. 启动打字机效果
+        char_list = []
+        for text, tag in segments:
+            for char in text:
+                char_list.append((char, tag))
+        
+        # 启动递归调用
+        self._typewriter_step(char_list)
 
-                    self.text_area.insert(tk.INSERT, "\n")
+    def _typewriter_step(self, char_list, index=0):
+        """打字机的核心函数，一次处理一个字符"""
+        if index < len(char_list):
+            char, tag = char_list[index]
+            
+            # 插入带标签的字符
+            if tag:
+                self.text_area.insert(tk.END, char, tag)
+            else:
+                self.text_area.insert(tk.END, char)
+            
+            # 滚动到底部
+            self.text_area.see(tk.END)
+            delay = 6
+            self.typewriter_job = self.after(delay, self._typewriter_step, char_list, index + 1)
+        else:
+            # 所有字符都已显示完毕
+            self.typewriter_job = None
+            # 重新处理加粗（在全部文本显示后处理）
+            self.apply_bold_tags()
+            self.text_area.config(state=tk.DISABLED) # 在这里才禁用文本框
 
+    def apply_bold_tags(self):
+        """在文本完全显示后，查找并应用加粗标签"""
+        import re
+        content = self.text_area.get("1.0", tk.END)
+        
+        # 清理 ** 标记并应用加粗
+        offset = 0
+        for match in re.finditer(r"\*\*(.*?)\*\*", content):
+            clean_text = match.group(1)
+            
+            start_index = self.text_area.index(f"1.0+{match.start() - offset}c")
+            end_index = self.text_area.index(f"1.0+{match.end() - offset}c")
+            
+            self.text_area.delete(start_index, end_index)
+            self.text_area.insert(start_index, clean_text, "md_bold")
+            
+            offset += 4 # 2个*号被删除，总共4个字符
+
+    def _update_ui(self, text=None, error=None):
+        """
+        这个方法总是在主线程中被调用，用于安全地更新UI。
+        """
+        self.text_area.config(state=tk.NORMAL)
+        self.text_area.delete('1.0', tk.END)
         self.text_area.config(state=tk.DISABLED)
+        
+        if error:
+            log("update ui发生错误")
+            # 如果有错误，显示错误信息
+            error_message = f"发生错误: {error}"
+            self.display_message(error_message)
+            # 也可以在这里弹窗，效果更强烈
+            messagebox.showerror("API 调用失败", error_message)
+            # 失败后依然启用输入框，让用户可以复制错误或关闭窗口
+            self.enable_input()
+        
+        elif text:
+            # 如果成功，显示结果并初始化聊天
+            self.display_message(text, is_model=True)
+            self.chat_session = self.model.start_chat(history=[
+                {'role': 'user', 'parts': [self.initial_prompt, self.loaded_image]},
+                {'role': 'model', 'parts': [text]}
+            ])
+            self.enable_input()
 
 # 主控制器 
 class MainController:
@@ -391,7 +593,7 @@ class MainController:
 
     def setup_from_config(self):
         """根据加载的配置初始化应用，失败则返回False"""
-        set_proxy(self.config.get("proxy_url", ""))
+        #set_proxy(self.config.get("proxy_url", ""))
         model_name = self.config.get("model_name", "gemini-2.0-flash-latest")
         
         self.gemini_model = configure_gemini(self.config.get("api_key", ""), model_name)
@@ -470,8 +672,12 @@ class MainController:
         if self.root: self.root.destroy()
 
     def start_screenshot_flow(self):
-        if self.is_running_action: return
-        self.is_running_action = True
+        if self.is_running_action:
+            log("警告：当前已有任务在运行，本次触发被忽略。")
+            return
+        
+        log("---------- 新任务开始，重新检查代理 ----------")
+        set_proxy(self.config.get("proxy_url", ""))
         log("[LOG-C6] 准备创建 ScreenshotTaker 实例...")
         # 动态构建截图路径
         screenshot_path = os.path.join(self.config_manager.app_dir, "temp_screenshot.png")
@@ -496,8 +702,8 @@ class MainController:
 
 
 if __name__ == "__main__":
-    # 在创建任何Tkinter窗口之前，先声明进程的DPI感知级别
-    # 这会告诉Windows不要对我们的窗口进行DPI虚拟化
+    # 创建任何Tkinter窗口之前，先声明进程的DPI感知级别
+    # 告诉Windows不要对我们的窗口进行DPI虚拟化
     try:
         ctypes.windll.shcore.SetProcessDpiAwarenessContext(-2)
         log("DPI感知级别已设置为 Per Monitor Aware。")
