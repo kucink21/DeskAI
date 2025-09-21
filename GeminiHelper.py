@@ -40,36 +40,33 @@ def setup_logging():
         app_dir = os.path.dirname(__file__)
     log_filepath = os.path.join(app_dir, "log.txt")
 
-    # 1. 获取根 logger
-    # 我们直接配置根 logger，这样所有地方调用 logging.info 都会生效
+    # 获取根 logger
     logger = logging.getLogger()
     logger.setLevel(logging.INFO) # 设置日志记录的最低级别
 
-    # 2. 清除任何可能已经存在的处理器，防止日志重复
+    # 清除任何可能已经存在的处理器，防止日志重复
     if logger.hasHandlers():
         logger.handlers.clear()
 
-    # 3. 创建格式化器
-    # 定义日志的格式：[时间戳][线程ID] 日志消息
+    # 创建格式化器
     formatter = logging.Formatter('[%(asctime)s][Thread:%(thread)d] %(message)s', datefmt='%H:%M:%S')
 
-    # 4. 创建并配置 StreamHandler (用于输出到控制台)
+    # 创建并配置 StreamHandler
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
-    # 5. 创建并配置 FileHandler (用于输出到文件)
+    # 5. 创建并配置 FileHandler 
     try:
         file_handler = logging.FileHandler(log_filepath, mode='w', encoding='utf-8')
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
     except Exception as e:
-        # 如果因为权限等问题无法创建日志文件，在控制台打印错误
         print(f"无法创建日志文件: {e}")
 
 setup_logging()
 
-# 一个全局的、易于使用的 log 函数
+# 全局的 log 函数
 def log(message):
     """全局日志函数，使用 logging.info"""
     logging.info(message)
@@ -78,15 +75,16 @@ def set_proxy(config_proxy_url):
     """
     智能设置代理。
     优先级：用户在 config.json 中明确指定的代理 > 系统代理 > 无代理
+    返回最终确定的代理URL，如果没有则返回 None。
     """
     final_proxy = None
     
-    # 1. 检查用户是否在 config.json 中强制指定了代理
+    # 检查用户是否在 config.json 中强制指定了代理
     if config_proxy_url:
         log(f"用户在 config.json 中指定了代理: {config_proxy_url}")
         final_proxy = config_proxy_url
     else:
-        # 2. 如果用户未指定，则尝试自动检测系统代理
+        # 如果用户未指定，则尝试自动检测系统代理
         log("尝试自动检测系统代理...")
         try:
             # 使用 urllib.request.getproxies() 这个 Python 内置的功能来获取系统代理
@@ -113,11 +111,20 @@ def set_proxy(config_proxy_url):
     else:
         log("最终未设置代理，将进行直接连接。")
 
-def configure_gemini(api_key, model_name): 
+    return final_proxy 
+
+def configure_gemini(api_key, model_name, proxy_url=None): # proxy_url 参数保留，但函数体内不用
     try:
-        genai.configure(api_key=api_key)
+        # 强制使用 'rest' 传输协议。
+        # 这会使库使用标准的 HTTPS 请求，从而自动遵循 os.environ 中设置的代理。
+        # 不再需要手动传递 proxies 参数。
+        genai.configure(
+            api_key=api_key,
+            transport='rest'
+        )
+        
         model = genai.GenerativeModel(model_name) 
-        log(f"Gemini model '{model_name}' set successfully")
+        log(f"Gemini model '{model_name}' set successfully using REST transport")
         return model
     except Exception as e:
         log(f"Gemini model failed: {e}")
@@ -232,23 +239,26 @@ class ScreenshotTaker:
 
 
 class ResultWindow(tk.Toplevel):
-    def __init__(self, model, config_manager):
+    def __init__(self, model, config_manager, prompt, task_type, task_data):
         super().__init__()
         self.model = model
         self.config_manager = config_manager
+        
+        # 新增: 存储传入的任务信息
+        self.initial_prompt = prompt
+        self.task_type = task_type
+        self.task_data = task_data
 
-        self.config = self.config_manager.load_config() 
-        self.initial_prompt = self.config.get("initial_prompt", "请描述这张图片,并将图片中字符（如果有）翻译成中文。") # 提供一个默认值
-
-        self.screenshot_path = os.path.join(self.config_manager.app_dir, "temp_screenshot.png")
+        # self.screenshot_path 不再需要了，因为信息在 task_data 中
         self.chat_session = None
-        self.loaded_image = None
+        self.loaded_image = None # 仅在图片任务中被赋值
         self.timeout_job = None
         self.typewriter_job = None 
         
         self.setup_ui()
         
-        threading.Thread(target=self.process_image_and_get_response, daemon=True).start()
+        #  process_image_and_get_response 重命名为 process_initial_request
+        threading.Thread(target=self.process_initial_request, daemon=True).start()
 
     def on_timeout(self):
         """当API调用超时时，由主线程的定时器调用"""
@@ -357,46 +367,55 @@ class ResultWindow(tk.Toplevel):
         )
         self.disable_input()
 
-    def process_image_and_get_response(self):
-        if not os.path.exists(self.screenshot_path):
-            # 使用 lambda 包装
-            self.after(0, lambda: self._update_ui(error="找不到截图文件。"))
-            return
-
-        # 在主线程里显示“正在分析”，这是安全的
-        self.display_message("正在分析图片...\n")
+    def process_initial_request(self):
+        """通用处理函数，根据任务类型发送初始请求"""
+        self.display_message("正在分析...\n")
         self.attributes('-topmost', True); self.focus_force(); self.attributes('-topmost', False)
         
-        # 1. 设置一个15秒后会“爆炸”的定时器
         timeout_seconds = 12
         self.timeout_job = self.after(timeout_seconds * 1000, self.on_timeout)
         log(f"已设置 {timeout_seconds} 秒的API调用超时定时器。")
 
-        # 2. 定义一个在后台线程中运行的真正的工作函数
         def background_task():
             try:
-                self.loaded_image = Image.open(self.screenshot_path)
-                # 我们依然保留库自带的timeout，作为第一道防线
+                content_parts = [self.initial_prompt]
+                
+                # 根据任务类型准备请求内容
+                if self.task_type == 'image':
+                    image_path = self.task_data
+                    if not os.path.exists(image_path):
+                        raise FileNotFoundError(f"找不到截图文件: {image_path}")
+                    self.loaded_image = Image.open(image_path)
+                    content_parts.append(self.loaded_image)
+                
+                elif self.task_type == 'text':
+                    clipboard_text = self.task_data
+                    content_parts.append(clipboard_text)
+                
+                else:
+                    raise ValueError(f"未知的任务类型: {self.task_type}")
+
+                # 发送请求
                 response = self.model.generate_content(
-                    [self.initial_prompt, self.loaded_image],
+                    content_parts,
                     request_options={"timeout": timeout_seconds} 
                 )
                 result_text = response.text.strip()
                 result_error = None
+
             except Exception as e:
                 result_text = None
                 result_error = e
             
-            # 3. 无论成功还是失败，工作完成后，先拆除“炸弹”
+            # 无论成功还是失败，取消超时定时器
             if self.timeout_job:
                 self.after_cancel(self.timeout_job)
                 self.timeout_job = None
-                log("API调用已完成，超时定时器已取消。")
+                log("API调用已完成或失败，超时定时器已取消。")
             
-            # 4. 将结果调度回主线程
+            # 将结果调度回主线程更新UI
             self.after(0, lambda: self._update_ui(text=result_text, error=result_error))
 
-        # 5. 启动后台线程
         threading.Thread(target=background_task, daemon=True).start()
     
     def send_follow_up_question(self, event=None):
@@ -575,8 +594,16 @@ class ResultWindow(tk.Toplevel):
         elif text:
             # 如果成功，显示结果并初始化聊天
             self.display_message(text, is_model=True)
+            
+            # 动态构建聊天历史
+            history_user_parts = [self.initial_prompt]
+            if self.task_type == 'image' and self.loaded_image:
+                history_user_parts.append(self.loaded_image)
+            elif self.task_type == 'text':
+                history_user_parts.append(self.task_data)
+
             self.chat_session = self.model.start_chat(history=[
-                {'role': 'user', 'parts': [self.initial_prompt, self.loaded_image]},
+                {'role': 'user', 'parts': history_user_parts},
                 {'role': 'model', 'parts': [text]}
             ])
             self.enable_input()
@@ -590,61 +617,79 @@ class MainController:
         self.gemini_model = None
         self.scaling_factor = 1.0
         self.current_pressed = set()
-        self.hotkey_set = set()
+        self.hotkey_actions = {} 
         self.is_running_action = False
         self.root = None
 
     def on_press(self, key):
+        # 如果有任务在运行，直接忽略任何按键，防止冲突
+        if self.is_running_action:
+            return
+            
         try:
             normalized_key = keyboard.KeyCode.from_char(key.char.lower())
         except AttributeError:
             normalized_key = key
-            
-        if normalized_key in self.hotkey_set:
-            self.current_pressed.add(normalized_key)
+        
+        self.current_pressed.add(normalized_key)
 
-        if self.current_pressed == self.hotkey_set:
-            log("[LOG-C2] 快捷键组合被正确按下。")
-            
-            if self.root:
-                self.root.after(0, self.start_screenshot_flow)
+        # 遍历所有已注册的动作快捷键
+        for action_name, key_set in self.hotkey_actions.items():
+            if self.current_pressed == key_set:
+                log(f"动作 '{action_name}' 的快捷键被触发。")
+                if self.root:
+                    self.root.after(0, self.trigger_action, action_name)
+                break
             
     def on_release(self, key):
         """按键释放的监听回调，只负责清理 (最终绝对稳定版)"""
-        
-        try:
-            normalized_key = keyboard.KeyCode.from_char(key.char.lower())
-        except AttributeError:
-            normalized_key = key
-
-        if normalized_key in self.hotkey_set:
-            try:
-                self.current_pressed.clear()
-                log(f"快捷键组合结束 (释放了 {normalized_key})，状态已重置。")
-            except KeyError:
-                pass
+        # 释放任何一个键都重置当前按键组合状态
+        self.current_pressed.clear()
+        log(f"按键释放，重置快捷键状态。")
 
     def setup_from_config(self):
         """根据加载的配置初始化应用，失败则返回False"""
-        #set_proxy(self.config.get("proxy_url", ""))
-        model_name = self.config.get("model_name", "gemini-2.0-flash-latest")
+        # 提前设置代理，并获取返回的代理地址
+        proxy_url = set_proxy(self.config.get("proxy_url", ""))
+
+        model_name = self.config.get("model_name", "gemini-1.5-flash-latest")
         
-        self.gemini_model = configure_gemini(self.config.get("api_key", ""), model_name)
+        # 将获取到的代理地址传给 configure_gemini
+        self.gemini_model = configure_gemini(
+            api_key=self.config.get("api_key", ""), 
+            model_name=model_name,
+            proxy_url=proxy_url
+        )
 
         if not self.gemini_model:
-            self.show_error_and_exit(f"Gemini配置错误: API Key 无效、网络问题或模型名称 '{model_name}' 不正确。\n\n请检查 config.json 文件。")
-            return False
-        
-        self.gemini_model = configure_gemini(self.config.get("api_key", ""), model_name)
-        if not self.gemini_model:
-            self.show_error_and_exit(f"Gemini配置错误: API Key 无效或网络问题。\n\n请检查 config.json 文件。")
+            self.show_error_and_exit(f"Gemini配置错误: API Key 无效、网络问题或模型名称 '{model_name}' 不正确。\n\n请检查 config.json 文件和代理设置。")
             return False
 
-        self.hotkey_set = self.parse_hotkey(self.config.get("hotkey", ""))
-        if not self.hotkey_set:
-            self.show_error_and_exit(f"快捷键配置错误: 无法解析快捷键 '{self.config.get('hotkey', '')}'。\n\n请检查 config.json 文件中的格式 (例如: shift+cmd+d)。")
+        # 先把 actions 从 config 中取出来
+        actions = self.config.get("actions", {})
+        if not actions:
+            self.show_error_and_exit("配置文件中未找到 'actions' 配置项。")
             return False
-        
+            
+        log("正在解析 actions...")
+        for action_name, details in actions.items():
+            hotkey_str = details.get("hotkey")
+            if not hotkey_str:
+                log(f"警告: 动作 '{action_name}' 没有配置 hotkey，将被忽略。")
+                continue
+            
+            key_set = self.parse_hotkey(hotkey_str)
+            if not key_set:
+                self.show_error_and_exit(f"快捷键配置错误: 无法解析动作 '{action_name}' 的快捷键 '{hotkey_str}'。")
+                return False
+            
+            self.hotkey_actions[action_name] = key_set
+            log(f"  -> 已注册动作: '{action_name}', 快捷键: {hotkey_str}")
+
+        if not self.hotkey_actions:
+            self.show_error_and_exit("未成功注册任何有效的快捷键动作。")
+            return False
+            
         self.scaling_factor = get_screen_scaling_factor()
         return True
 
@@ -671,6 +716,51 @@ class MainController:
         
         return keys
 
+    def trigger_action(self, action_name):
+        """根据动作名称触发相应的流程"""
+        if self.is_running_action:
+            log("警告：当前已有任务在运行，本次触发被忽略。")
+            return
+        
+        log(f"---------- 新任务开始 ({action_name}) ----------")
+        self.is_running_action = True # 在流程开始时就设置标志
+        set_proxy(self.config.get("proxy_url", ""))
+
+        if action_name == "screenshot":
+            self.start_screenshot_flow()
+        elif action_name == "clipboard_text":
+            self.start_clipboard_flow()
+        else:
+            log(f"错误: 未知的动作名称 '{action_name}'")
+            self.is_running_action = False # 未知动作，重置标志
+
+    def start_clipboard_flow(self):
+        """处理剪贴板文本的流程"""
+        try:
+            clipboard_content = self.root.clipboard_get()
+            if not clipboard_content.strip():
+                messagebox.showinfo("提示", "剪贴板内容为空。")
+                self.is_running_action = False # 流程结束，重置标志
+                return
+            
+            action_config = self.config["actions"]["clipboard_text"]
+            prompt = action_config.get("prompt", "请处理这段文本:") # 默认值
+            
+            log("成功获取剪贴板文本，准备显示结果窗口。")
+            self.show_result_window(
+                prompt=prompt, 
+                task_type="text", 
+                task_data=clipboard_content
+            )
+
+        except tk.TclError:
+            messagebox.showinfo("提示", "无法从剪贴板获取文本内容。")
+            self.is_running_action = False # 流程结束，重置标志
+        except Exception as e:
+            messagebox.showerror("错误", f"处理剪贴板时发生未知错误: {e}")
+            log(f"处理剪贴板时发生未知错误: {e}")
+            self.is_running_action = False # 流程结束，重置标志
+
     def run(self):
         """启动主程序"""
         log("[LOG-C3] MainController.run() 启动。")
@@ -691,7 +781,12 @@ class MainController:
             return
         
         log("Gemini助手已启动，在后台等待快捷键...")
-        log(f"快捷键: {self.config.get('hotkey', '未知').upper()}")
+        log("已注册的快捷键动作如下:")
+        # 从 self.config 中读取 actions，以获取原始的 hotkey 字符串用于显示
+        actions_config = self.config.get("actions", {})
+        for name in self.hotkey_actions.keys():
+            hotkey_str = actions_config.get(name, {}).get("hotkey", "未知")
+            log(f"  -> {name}: {hotkey_str.upper()}")
         
         listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release)
         listener.start()
@@ -705,27 +800,39 @@ class MainController:
         if self.root: self.root.destroy()
 
     def start_screenshot_flow(self):
-        if self.is_running_action:
-            log("警告：当前已有任务在运行，本次触发被忽略。")
-            return
-        
-        log("---------- 新任务开始，重新检查代理 ----------")
-        set_proxy(self.config.get("proxy_url", ""))
+        """处理截图的流程"""
         log("[LOG-C6] 准备创建 ScreenshotTaker 实例...")
-        # 动态构建截图路径
         screenshot_path = os.path.join(self.config_manager.app_dir, "temp_screenshot.png")
-        ScreenshotTaker(self.scaling_factor, self.screenshot_done, screenshot_path)
+        # 将截图路径作为额外信息传递给回调函数
+        callback = lambda cancelled=False: self.screenshot_done(cancelled, screenshot_path)
+        ScreenshotTaker(self.scaling_factor, callback, screenshot_path)
         log("[LOG-C7] ScreenshotTaker 实例创建完成。")
     
-    def screenshot_done(self, cancelled=False):
+    def screenshot_done(self, cancelled=False, screenshot_path=None):
         if cancelled:
             self.is_running_action = False
+            log("截图任务被取消。")
+        elif screenshot_path:
+            action_config = self.config["actions"]["screenshot"]
+            prompt = action_config.get("prompt", "请描述这张图片:")
+            self.show_result_window(
+                prompt=prompt,
+                task_type="image",
+                task_data=screenshot_path
+            )
         else:
-            self.show_result_window()
+            log("截图完成，但未提供截图路径。")
+            self.is_running_action = False
         
-    def show_result_window(self):
+    def show_result_window(self, prompt, task_type, task_data):
         log("[LOG-C8] show_result_window 被调用。")
-        result_win = ResultWindow(self.gemini_model, self.config_manager)
+        result_win = ResultWindow(
+            model=self.gemini_model, 
+            config_manager=self.config_manager,
+            prompt=prompt,
+            task_type=task_type,
+            task_data=task_data
+        )
         result_win.protocol("WM_DELETE_WINDOW", lambda: self.on_result_window_close(result_win))
         
     def on_result_window_close(self, window):
@@ -736,7 +843,7 @@ class MainController:
 
 if __name__ == "__main__":
     # 在创建任何Tkinter窗口之前，先声明进程的DPI感知级别
-    # 这会告诉Windows不要对我们的窗口进行DPI虚拟化
+    # 这会告诉Windows不要对窗口进行DPI虚拟化
     try:
         ctypes.windll.shcore.SetProcessDpiAwarenessContext(-2)
         log("DPI感知级别已设置为 Per Monitor Aware。")

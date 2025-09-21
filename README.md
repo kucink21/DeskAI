@@ -1,20 +1,20 @@
-# Gemini 截图助手 v1.0
+# Gemini 屏幕助手 v1
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/michaelz9436/GeminiScreenHelper/main/assets/google-gemini-icon.ico" alt="Gemini Screen Helper Icon" width="100">
 </p>
 
-欢迎使用 Gemini 截图助手！本工具可以通过自定义快捷键，快速截取屏幕任意区域，并调用 Google Gemini 模型进行文字识别、翻译或任何你指定的任务。  
-程序已开放下载！ --见release
+欢迎使用 Gemini 屏幕助手！本工具可以通过自定义快捷键，快速截屏或使用剪贴板内容，并调用 Google Gemini 模型进行文字识别、翻译或任何你指定的任务。  
+程序已开放下载！ --见 `release`
 
 ---
 ## ✨ 功能演示
 
-#### 场景一：阅读外文文献/网页时快速翻译
-![Reading Demo](https://raw.githubusercontent.com/michaelz9436/GeminiScreenHelper/main/assets/reading.gif)
+#### 场景一：使用快捷截图进行翻译/识别/代码
+![Reading Demo](https://raw.githubusercontent.com/michaelz9436/GeminiScreenHelper/main/assets/merged_demo1.gif)
 
-#### 场景二：分析代码片段
-![Coding Demo](https://raw.githubusercontent.com/michaelz9436/GeminiScreenHelper/main/assets/coding.gif)
+#### 场景二：使用剪贴板内容快捷翻译/识别
+![Coding Demo](https://raw.githubusercontent.com/michaelz9436/GeminiScreenHelper/main/assets/merged_demo2.gif)
 
 ---
 
@@ -31,7 +31,7 @@
     通常情况下，程序会自动检测代理端口。如果运行时出现报错，请检测`log.txt`
 
 4.  **设置快捷键**:
-    在 `config.json` 文件中设置你喜欢的组合键，用于随时调用截图工具。
+    在 `config.json` 文件中设置你喜欢的组合键，用于随时调用截图和剪贴板工具。
 
 5.  **运行程序**:
     双击运行 `GeminiHelper.exe`。程序会静默在后台运行。按下你设定的快捷键即可开始使用！
@@ -52,7 +52,7 @@
 如果代理出问题，请检查log.txt，并尝试手动设置代理端口，如：`"http://127.0.0.1:7890"` <- 确认这个端口
 
 #### 3. `"hotkey"` (必需)
-触发截图的全局快捷键。
+触发截图和发送剪贴板的全局快捷键。
 - 使用 `+` 连接按键。
 - 支持的修饰键: `shift`, `ctrl`, `alt`, `cmd` (Win键)。
 - 普通按键请使用单个小写字母或数字，如 `d`, `q`, `1`。
@@ -105,7 +105,7 @@
 
 2.  **全局快捷键监听**: 本程序会在后台监听您的键盘输入，以便响应您在 `config.json` 中设置的全局快捷键。本程序**不会**记录或上传除快捷键组合之外的任何键盘活动。
 
-3.  **杀毒软件警告**: 由于本程序需要监听全局键盘快捷键，部分杀毒软件（包括 Windows Defender）可能会将其标记为潜在风险程序（如 "Keylogger" 或 "监控工具"）。这是一个正常的误报，因为杀- 杀毒软件无法区分善意的快捷键功能和恶意的键盘记录。如果您信任本程序的源代码和功能，请选择“允许”或将本程序添加到信任列表。
+3.  **杀毒软件警告**: 由于本程序需要监听全局键盘快捷键，部分杀毒软件（包括 Windows Defender）可能会将其标记为潜在风险程序（如 "Keylogger" 或 "监控工具"）。这是一个正常的误报，因为杀毒软件无法区分善意的快捷键功能和恶意的键盘记录。如果您信任本程序的源代码和功能，请选择“允许”或将本程序添加到信任列表。
 
 4.  **配置文件安全**: 您的 Gemini API Key 存储在您本地的 `config.json` 文件中，不会被上传或分享。请妥善保管此文件，不要泄露给他人。
 
