@@ -6,6 +6,8 @@ import os
 from pynput import keyboard
 
 # 导入我们自己的模块
+from features.floating_ball import FloatingBall
+from features.tray_icon import TrayIcon
 from .config_manager import ConfigManager
 from .ui import ScreenshotTaker, ResultWindow
 from .utils import log, set_proxy, configure_gemini, get_screen_scaling_factor
@@ -22,6 +24,8 @@ class MainController:
         self.hotkey_actions = {} 
         self.is_running_action = False
         self.root = None
+        self.floating_ball = None
+        self.tray_icon = None
 
     def on_press(self, key):
         # 如果有任务在运行，直接忽略任何按键，防止冲突
@@ -162,7 +166,90 @@ class MainController:
             messagebox.showerror("错误", f"处理剪贴板时发生未知错误: {e}")
             log(f"处理剪贴板时发生未知错误: {e}")
             self.is_running_action = False # 流程结束，重置标志
+            
+    def create_widgets(self):
+        """创建所有UI组件，如悬浮球和托盘图标"""
+        self.floating_ball = FloatingBall(
+            master=self.root,
+            on_start_chat_callback=self.start_temporary_chat,
+            on_hide_callback=self.hide_ball_to_tray
+        )
+        self.tray_icon = TrayIcon(
+            on_show_callback=self.show_ball_from_tray,
+            on_exit_callback=self.exit_app
+        )
+        # 首次不启动托盘，因为悬浮球是可见的
 
+    def start_temporary_chat(self):
+        """由悬浮球触发，启动一个临时的纯文本聊天"""
+        if self.floating_ball:
+            self.floating_ball.reset_idle_timer() 
+        if self.is_running_action:
+            log("警告：当前已有任务在运行，本次触发被忽略。")
+            messagebox.showwarning("忙碌中", "请等待上一个任务完成。")
+            return
+
+        log("---------- 悬浮球任务开始（临时对话）----------")
+        self.is_running_action = True
+        
+        # 这里的 prompt 只是为了启动对话，可以自定义
+        prompt = "你好！"
+        
+        # task_data 为空，表示这是一个纯粹的、无上下文的对话开始
+        self.show_result_window(
+            prompt=prompt,
+            task_type="text",
+            task_data="" 
+        )
+
+    def hide_ball_to_tray(self):
+        """隐藏悬浮球并显示托盘图标"""
+        if self.floating_ball:
+            self.floating_ball.reset_idle_timer()
+        if self.floating_ball:
+            self.floating_ball.hide()
+        if self.tray_icon:
+            self.tray_icon.start() # 仅在需要时启动托盘线程
+
+    def show_ball_from_tray(self):
+        """从托盘恢复悬浮球"""
+        if self.tray_icon:
+            self.tray_icon.stop()
+            # pystray的stop是非阻塞的，需要一点时间来确保线程退出
+            self.root.after(100, self._show_ball_action)
+            
+    def _show_ball_action(self):
+        """确保在托盘退出后显示悬浮球"""
+        if self.floating_ball:
+            self.floating_ball.show()
+            self.floating_ball.window.lift() # 确保窗口在最顶层
+            self.floating_ball.window.focus_force()
+
+    def exit_app(self):
+        """干净地退出整个应用程序"""
+        log("正在退出应用程序...")
+        if self.tray_icon:
+            self.tray_icon.stop()
+        if self.floating_ball:
+            self.floating_ball.destroy()
+        if self.root:
+            self.root.quit()
+            self.root.destroy()
+        log("应用程序已退出。")
+        # 使用 os._exit(0) 确保所有线程都被强制终止
+        os._exit(0)
+
+    # 我们需要修改 show_error_and_exit
+    def show_error_and_exit(self, message):
+        """显示一个错误消息框，然后退出程序"""
+        log(f"启动错误: {message.replace(os.linesep, ' ')}")
+        # 错误可能在主循环开始前发生，此时 messagebox 可能无法正常显示
+        # 创建一个临时root来显示错误
+        temp_root = tk.Tk()
+        temp_root.withdraw()
+        messagebox.showerror("启动错误", message, parent=temp_root)
+        temp_root.destroy()
+        self.exit_app()
     def run(self):
         """启动主程序"""
         log("[LOG-C3] MainController.run() 启动。")
@@ -181,7 +268,9 @@ class MainController:
 
         if not self.setup_from_config():
             return
-        
+        log("正在创建悬浮球和系统托盘...")
+        self.create_widgets()
+
         log("Gemini助手已启动，在后台等待快捷键...")
         log("已注册的快捷键动作如下:")
         # 从 self.config 中读取 actions，以获取原始的 hotkey 字符串用于显示

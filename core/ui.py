@@ -145,7 +145,7 @@ class ResultWindow(tk.Toplevel):
         self._update_ui(error=error_message)
 
     def setup_ui(self):
-        self.title(" Gemini 识别结果 --> 你可以发送消息继续这个聊天 :) ")
+        self.title(" [Gemini对话窗口] --> 你可以发送消息继续这个聊天 :) ")
         self.geometry("1200x1050")
         
         main_frame = ctk.CTkFrame(
@@ -256,7 +256,9 @@ class ResultWindow(tk.Toplevel):
                 
                 elif self.task_type == 'text':
                     clipboard_text = self.task_data
-                    content_parts.append(clipboard_text)
+                    # --- 新增逻辑 ---
+                    if clipboard_text: # 只有当task_data不为空时才添加
+                        content_parts.append(clipboard_text)
                 
                 else:
                     raise ValueError(f"未知的任务类型: {self.task_type}")
