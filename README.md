@@ -1,6 +1,8 @@
 # Gemini 截图助手 v1.0
 
-![Gemini Screen Helper Icon](https://raw.githubusercontent.com/michaelz9436/GeminiScreenHelper/main/assets/google-gemini-icon.ico)
+<p align="center">
+  <img src="https://raw.githubusercontent.com/michaelz9436/GeminiScreenHelper/main/assets/google-gemini-icon.ico" alt="Gemini Screen Helper Icon" width="100">
+</p>
 
 欢迎使用 Gemini 截图助手！本工具可以通过自定义快捷键，快速截取屏幕任意区域，并调用 Google Gemini 模型进行文字识别、翻译或任何你指定的任务。  
 程序已开放下载！ --见release
