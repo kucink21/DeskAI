@@ -15,7 +15,9 @@ dist/
 /run*
 /v1-1
 /historic_releases
+/old
 
 temp_screenshot.png
 *.log
 *.zip
+log.*
