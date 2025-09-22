@@ -94,7 +94,6 @@ class SettingsWindow(ctk.CTkToplevel):
             justify="left"
         )
         proxy_info_label.pack(anchor="w", padx=10, pady=(3, 0))
-        self.create_entry(scrollable_frame, "模型名称", ["model_name"])
 
         # --- 快捷键动作 Prompts ---
         ctk.CTkLabel(scrollable_frame, text="快捷键动作", font=("微软雅黑", 16, "bold")).pack(anchor="w", pady=(20, 5)) # 修改标题

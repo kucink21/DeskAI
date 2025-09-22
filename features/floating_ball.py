@@ -22,7 +22,7 @@ except ImportError:
 
 
 class FloatingBall:
-    def __init__(self, master, on_start_chat_callback, on_hide_callback, on_drop_callback, on_settings_callback, on_instructions_callback, on_memory_callback, on_restart_callback, on_exit_callback):
+    def __init__(self, master, initial_theme_prefix: str, on_start_chat_callback, on_hide_callback, on_drop_callback, on_settings_callback, on_instructions_callback, on_memory_callback, on_restart_callback, on_exit_callback):
         self.master = master
         self.on_start_chat_callback = on_start_chat_callback
         self.on_hide_callback = on_hide_callback
@@ -36,7 +36,7 @@ class FloatingBall:
         self.is_session_active = False
         self.idle_pil_image = None
         self.session_pil_image = None
-
+        self.current_theme = ""
 
         self.ball_size = 132 
         self.window = tk.Toplevel(master)
@@ -54,19 +54,12 @@ class FloatingBall:
             base_path = sys._MEIPASS
         else:
             base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        
-        idle_png_path = os.path.join(base_path, 'icon', 'ball.png')
-        if os.path.exists(idle_png_path):
-            self.idle_pil_image = Image.open(idle_png_path)
-        else:
-            self.idle_pil_image = self.create_canvas_image()
+        # 1. 在 __init__ 中直接调用 set_icon_theme 来加载初始主题
+        #    这会确保 self.idle_pil_image 被正确赋值。
+        self.set_icon_theme(initial_theme_prefix)
 
-        session_png_path = os.path.join(base_path, 'icon', 'ball2.png')
-        if os.path.exists(session_png_path):
-            self.session_pil_image = Image.open(session_png_path)
-        else:
-            self.session_pil_image = self.idle_pil_image
-
+        # 2. 现在，使用已经加载好的 self.idle_pil_image 来创建 self.label 控件
+        #    这是确保 self.label 在被使用前存在的关键一步。
         self.ball_image = ImageTk.PhotoImage(self.idle_pil_image)
         self.label = tk.Label(self.window, image=self.ball_image, bd=0, bg=self.transparent_color)
         self.label.pack()
@@ -102,6 +95,48 @@ class FloatingBall:
         
         # 启动第一个待机计时器
         self.reset_idle_timer()
+
+    def set_icon_theme(self, theme_prefix: str):
+        """
+        加载并应用一套新的图标主题。
+        这个方法现在在初始化时被调用，也可以用于未来的主题热切换。
+        """
+        if self.current_theme == theme_prefix and self.idle_pil_image is not None:
+            return 
+            
+        log(f"正在设置/切换悬浮球图标主题为: {theme_prefix}")
+        self.current_theme = theme_prefix
+        
+        try:
+            if getattr(sys, 'frozen', False):
+                base_path = sys._MEIPASS
+            else:
+                base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            
+            idle_png_path = os.path.join(base_path, 'icon', f'{theme_prefix}1.png')
+            session_png_path = os.path.join(base_path, 'icon', f'{theme_prefix}2.png')
+
+            if os.path.exists(idle_png_path):
+                self.idle_pil_image = Image.open(idle_png_path)
+            else:
+                log(f"警告：找不到待机图标 {idle_png_path}，将使用备用方案。")
+                self.idle_pil_image = self.create_canvas_image()
+
+            if os.path.exists(session_png_path):
+                self.session_pil_image = Image.open(session_png_path)
+            else:
+                log(f"警告：找不到会话图标 {session_png_path}，将使用待机图标代替。")
+                self.session_pil_image = self.idle_pil_image
+                
+            # 如果label已经存在，则立即更新显示
+            if hasattr(self, 'label') and self.label.winfo_exists():
+                self.update_image(self.current_angle)
+
+        except Exception as e:
+            log(f"加载图标主题 '{theme_prefix}' 失败: {e}")
+            if self.idle_pil_image is None: # 确保至少有一个可用的图像
+                self.idle_pil_image = self.create_canvas_image()
+                self.session_pil_image = self.idle_pil_image
 
     def handle_drop(self, event):
         """处理拖放事件，并将数据传递给主控制器"""

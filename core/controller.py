@@ -347,7 +347,12 @@ class MainController:
         )
     
     def create_widgets(self):
-        """创建所有UI组件"""
+        """创建所有UI组件，并传入初始主题"""
+        
+        # --- 从配置中获取初始图标主题 ---
+        selected_provider_name = self.config.get("selected_provider", list(self.models_config["providers"].keys())[0])
+        provider_info = self.models_config["providers"].get(selected_provider_name, {})
+        initial_theme_prefix = provider_info.get("icon_theme", "gemini") # 默认回退到 'gemini'
         
         # --- 创建包装后的回调函数 ---
         def start_chat_and_close_menu():
@@ -380,6 +385,7 @@ class MainController:
         # --- 实例化悬浮球，并传入所有回调 ---
         self.floating_ball = FloatingBall(
             master=self.root,
+            initial_theme_prefix=initial_theme_prefix,
             on_start_chat_callback=start_chat_and_close_menu,
             on_hide_callback=hide_ball_and_close_menu,
             on_drop_callback=self.handle_drop_data,
@@ -389,7 +395,7 @@ class MainController:
             on_restart_callback=restart_and_close_menu,
             on_exit_callback=exit_and_close_menu
         )
-        
+
         # --- 实例化托盘图标---
         self.tray_icon = TrayIcon(
             on_show_callback=self.show_ball_from_tray,
@@ -786,6 +792,8 @@ class MainController:
         
     def show_result_window(self, prompt, task_type, task_data):
         log("[LOG-C8] show_result_window 被调用。")
+        if self.floating_ball:
+            self.floating_ball.set_session_state(True)
         result_win = ResultWindow(
             ai_provider=self.ai_provider, # <--- 修改
             prompt=prompt,
@@ -797,6 +805,8 @@ class MainController:
     # 修改 show_result_window_for_multimodal
     def show_result_window_for_multimodal(self, prompt, task_type, task_data_tuple):
         log("[LOG-C8-MM] show_result_window_for_multimodal 被调用。")
+        if self.floating_ball:
+            self.floating_ball.set_session_state(True)
         result_win = ResultWindow(
             ai_provider=self.ai_provider, # <--- 修改
             prompt=prompt,
