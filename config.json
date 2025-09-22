@@ -1,5 +1,5 @@
 {
-  "api_key": "Your_API_key_here",
+  "api_key": "Your_API_Key_Here",
   "proxy_url": "",
   "model_name": "gemini-2.5-flash-lite",
   "actions": {
@@ -10,6 +10,17 @@
     "clipboard_text": {
       "hotkey": "shift+c",
       "prompt": "如果这段文字不是中文，将它翻译成中文，并**只**给我翻译后的原文。如果已经是中文或是代码，请用中文解释其含义。请直接给出结果，不要说“好的，这是翻译：”这类的话。"
+    }
+  },
+  "drop_handlers": {
+    ".docx": {
+      "prompt": "这是一份Word文档的内容，请用简洁的语言总结其核心要点，并列出关键信息。"
+    },
+    ".pdf": {
+      "prompt": "这是一份PDF文档的内容和页面截图，请综合图文信息，总结这份文档的主旨和结论。"
+    },
+    ".py": {
+      "prompt": "这是一段Python代码，请完整解释它的功能。如果发现任何潜在的bug或可以优化的地方，请一并指出。"
     }
   }
 }

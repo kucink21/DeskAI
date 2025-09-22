@@ -4,7 +4,7 @@ import tkinter as tk
 from tkinter import messagebox
 import os
 from pynput import keyboard
-
+import docx
 # 导入我们自己的模块
 from features.floating_ball import FloatingBall
 from features.tray_icon import TrayIcon
@@ -51,7 +51,7 @@ class MainController:
         """按键释放的监听回调，只负责清理 (最终绝对稳定版)"""
         # 释放任何一个键都重置当前按键组合状态
         self.current_pressed.clear()
-        log(f"按键释放，重置快捷键状态。")
+        #log(f"按键释放，重置快捷键状态。")
 
     def setup_from_config(self):
         """根据加载的配置初始化应用，失败则返回False"""
@@ -68,7 +68,7 @@ class MainController:
         )
 
         if not self.gemini_model:
-            self.show_error_and_exit(f"Gemini配置错误: API Key 无效、网络问题或模型名称 '{model_name}' 不正确。\n\n请检查 config.json 文件和代理设置。")
+            self.show_error_and_exit(f"Gemini配置错误: API Key 无效、网络问题或模型名称 '{model_name}' 不正确。\n\n请检查 config.json 文件和代理设置。\n如果更新了API key，请重启程序以生效。")
             return False
 
         # 先把 actions 从 config 中取出来
@@ -262,7 +262,9 @@ class MainController:
             self.show_error_and_exit(
                 "配置文件 config.json 不存在或无效！\n\n"
                 "请在程序同级目录下创建 config.json 文件，\n"
-                "并填入您的 API Key 和其他配置。"
+                "并填入您的 API Key 和其他配置。\n"
+                "API Key 可以在 https://aistudio.google.com/app/apikey 免费获取。\n"
+                "如果更新了API key，请重启程序以生效。"
             )
             return
 
@@ -361,8 +363,10 @@ class MainController:
             task_data=text_content
         )
         
+    # 在 MainController 类中
+
     def process_dropped_files(self, filepaths):
-        """处理拖放的文件列表"""
+        """处理拖放的文件列表，并根据文件类型分发任务。"""
         if not filepaths:
             return
             
@@ -372,15 +376,93 @@ class MainController:
 
         ext = os.path.splitext(filepath)[1].lower()
         
+        # --- 智能选择 Prompt 和处理方式 ---
+        
+        # 1. 检查是否是新定义的 drop_handlers 类型
+        drop_handlers_config = self.config.get("drop_handlers", {})
+        if ext in drop_handlers_config:
+            handler_info = drop_handlers_config[ext]
+            prompt = handler_info.get("prompt", f"请处理这个 {ext} 文件。")
+            
+            # 根据扩展名调用不同的处理函数
+            if ext == ".docx":
+                self.handle_docx_file(filepath, prompt)
+            elif ext == ".pdf":
+                # 此处为未来实现PDF处理留出接口
+                log("PDF处理功能尚未实现。")
+                messagebox.showinfo("提示", "PDF文件处理功能正在开发中！")
+                self.is_running_action = False
+            elif ext == ".py": # 示例：代码文件也可以当做文本文件处理
+                self.handle_text_based_file(filepath, prompt)
+            else: # 其他在 drop_handlers 中定义的类型
+                self.handle_text_based_file(filepath, prompt)
+            return # 处理完毕，退出函数
+
+        # 2. 如果不是新类型，则回退到旧的逻辑
         if ext in ['.png', '.jpg', '.jpeg', '.bmp', '.webp']:
-            self.handle_dropped_image(filepath)
-        elif ext in ['.txt', '.md', '.py', '.json', '.html', '.css', '.js']:
-            self.handle_dropped_text_file(filepath)
+            self.handle_dropped_image(filepath) # 这个方法保持不变
+        elif ext in ['.txt', '.md', '.json', '.html', '.css', '.js']: # 扩展了旧的文本文件类型
+            self.handle_text_based_file(filepath, None) # 传入None, 让它复用剪贴板prompt
         else:
-            unsupported_message = f"不支持的文件类型: {ext}\n\n当前支持图片和纯文本文件。"
+            # 真正不支持的格式
+            unsupported_message = f"不支持的文件类型: {ext}\n\n当前支持图片、文本和部分文档格式。"
             log(unsupported_message)
             self.is_running_action = False
             messagebox.showinfo("操作失败", unsupported_message)
+
+    def handle_text_based_file(self, filepath, prompt=None):
+        """
+        统一处理所有基于文本的文件（.txt, .py, .md 等）。
+        如果 prompt 为 None，则复用剪贴板的 prompt。
+        """
+        if prompt is None:
+            # 复用旧逻辑
+            action_config = self.config["actions"].get("clipboard_text", {})
+            prompt = action_config.get("prompt", "请分析以下文件内容:")
+            
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                content = f.read()
+        except Exception as e:
+            log(f"读取文件失败: {filepath}, 错误: {e}")
+            messagebox.showerror("读取失败", f"无法读取文件内容:\n{e}")
+            self.is_running_action = False
+            return
+            
+        self.show_result_window(
+            prompt=prompt,
+            task_type="text",
+            task_data=content
+        )
+
+    def handle_docx_file(self, filepath, prompt):
+        """具体处理 .docx 文件的逻辑"""
+        log(f"正在从 .docx 文件提取文本: {filepath}")
+        try:
+            doc = docx.Document(filepath)
+            full_text = []
+            for para in doc.paragraphs:
+                full_text.append(para.text)
+            
+            # (可选) 提取表格内容
+            # for table in doc.tables:
+            #     for row in table.rows:
+            #         for cell in row.cells:
+            #             full_text.append(cell.text)
+
+            content = '\n'.join(full_text)
+
+        except Exception as e:
+            log(f"解析 .docx 文件失败: {filepath}, 错误: {e}")
+            messagebox.showerror("解析失败", f"无法解析 .docx 文件:\n{e}")
+            self.is_running_action = False
+            return
+
+        self.show_result_window(
+            prompt=prompt,
+            task_type="text", # docx内容也是文本
+            task_data=content
+        )
 
     def handle_dropped_image(self, filepath):
         """具体处理图片文件的逻辑"""
@@ -391,24 +473,4 @@ class MainController:
             prompt=prompt,
             task_type="image_from_path",
             task_data=filepath
-        )
-
-    def handle_dropped_text_file(self, filepath):
-        """具体处理文本文件的逻辑"""
-        try:
-            with open(filepath, 'r', encoding='utf-8') as f:
-                content = f.read()
-        except Exception as e:
-            log(f"读取文件失败: {filepath}, 错误: {e}")
-            messagebox.showerror("读取失败", f"无法读取文件内容:\n{e}")
-            self.is_running_action = False
-            return
-            
-        action_config = self.config["actions"].get("clipboard_text", {})
-        prompt = action_config.get("prompt", "请分析以下文件内容:")
-        
-        self.show_result_window(
-            prompt=prompt,
-            task_type="text",
-            task_data=content
         )
