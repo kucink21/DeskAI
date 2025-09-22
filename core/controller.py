@@ -5,6 +5,9 @@ from tkinter import messagebox
 import os
 from pynput import keyboard
 import docx
+import fitz
+from PIL import Image
+import threading
 # 导入我们自己的模块
 from features.floating_ball import FloatingBall
 from features.tray_icon import TrayIcon
@@ -362,8 +365,6 @@ class MainController:
             task_type="text",
             task_data=text_content
         )
-        
-    # 在 MainController 类中
 
     def process_dropped_files(self, filepaths):
         """处理拖放的文件列表，并根据文件类型分发任务。"""
@@ -378,37 +379,97 @@ class MainController:
         
         # --- 智能选择 Prompt 和处理方式 ---
         
-        # 1. 检查是否是新定义的 drop_handlers 类型
+        # 1. 优先检查是否是为 drop_handlers 特别定义的类型
         drop_handlers_config = self.config.get("drop_handlers", {})
         if ext in drop_handlers_config:
             handler_info = drop_handlers_config[ext]
             prompt = handler_info.get("prompt", f"请处理这个 {ext} 文件。")
+            log(f"使用为 '{ext}' 类型定义的专属 prompt。")
             
             # 根据扩展名调用不同的处理函数
             if ext == ".docx":
                 self.handle_docx_file(filepath, prompt)
             elif ext == ".pdf":
-                # 此处为未来实现PDF处理留出接口
-                log("PDF处理功能尚未实现。")
-                messagebox.showinfo("提示", "PDF文件处理功能正在开发中！")
-                self.is_running_action = False
-            elif ext == ".py": # 示例：代码文件也可以当做文本文件处理
+                self.handle_pdf_file(filepath, prompt)
+            elif ext in [".py", ".js", ".html", ".css", ".java", ".cpp"]: # 可以把所有代码文件都归到这里
                 self.handle_text_based_file(filepath, prompt)
-            else: # 其他在 drop_handlers 中定义的类型
+            else: # 其他在 drop_handlers 中定义的、但没有特殊处理器的类型
                 self.handle_text_based_file(filepath, prompt)
-            return # 处理完毕，退出函数
+            return
 
-        # 2. 如果不是新类型，则回退到旧的逻辑
+        # 2. 如果没有专属定义，则回退到通用的旧逻辑
         if ext in ['.png', '.jpg', '.jpeg', '.bmp', '.webp']:
-            self.handle_dropped_image(filepath) # 这个方法保持不变
-        elif ext in ['.txt', '.md', '.json', '.html', '.css', '.js']: # 扩展了旧的文本文件类型
-            self.handle_text_based_file(filepath, None) # 传入None, 让它复用剪贴板prompt
+            log("回退到通用的图片处理逻辑。")
+            self.handle_dropped_image(filepath) # 复用 screenshot prompt
+        
+        elif ext in ['.txt', '.md', '.json']: # <-- 注意：.py 已从此列表移除
+            log("回退到通用的文本文件处理逻辑。")
+            self.handle_text_based_file(filepath, None) # 传入None，复用 clipboard prompt
+        
         else:
             # 真正不支持的格式
             unsupported_message = f"不支持的文件类型: {ext}\n\n当前支持图片、文本和部分文档格式。"
             log(unsupported_message)
             self.is_running_action = False
             messagebox.showinfo("操作失败", unsupported_message)
+
+    def handle_pdf_file(self, filepath, prompt):
+        """
+        具体处理 .pdf 文件的逻辑。
+        采用图文混合模式，提取全部文本和页面截图。
+        """
+        log(f"正在处理PDF文件: {filepath}")
+        
+        # --- 创建一个后台线程来处理耗时的PDF解析 ---
+        def pdf_processing_thread():
+            try:
+                doc = fitz.open(filepath)
+                
+                full_text = []
+                page_images = []
+                
+                log(f"PDF共有 {len(doc)} 页。开始提取内容...")
+                
+                # 为了防止内容过长和处理时间过久，可以设置一个最大处理页数
+                MAX_PAGES_TO_PROCESS = 50 
+                pages_to_process = doc.page_count
+                if pages_to_process > MAX_PAGES_TO_PROCESS:
+                    log(f"警告：PDF页数过多，仅处理前 {MAX_PAGES_TO_PROCESS} 页。")
+                    pages_to_process = MAX_PAGES_TO_PROCESS
+
+                for i, page in enumerate(doc.load_page(page_num) for page_num in range(pages_to_process)):
+                    # 1. 提取文本
+                    full_text.append(page.get_text("text"))
+                    
+                    # 2. 渲染页面为图片
+                    # 设置DPI以提高图片质量，150是个不错的折中值
+                    pix = page.get_pixmap(dpi=150)
+                    # 从pixmap的样本数据创建Pillow Image对象
+                    img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                    page_images.append(img)
+                    
+                    log(f"  ...已处理第 {i+1}/{pages_to_process} 页")
+
+                doc.close()
+
+                # 将所有内容打包
+                content = "\n".join(full_text)
+                
+                # 将任务调度回主线程以显示结果窗口
+                # 注意：这里我们将图片列表和文本一起传递
+                self.root.after(0, self.show_result_window_for_multimodal, 
+                                prompt, "pdf_multimodal", (content, page_images))
+
+            except Exception as e:
+                log(f"解析 .pdf 文件失败: {filepath}, 错误: {e}")
+                # 确保在主线程中显示错误并重置状态
+                def show_error_and_reset():
+                    messagebox.showerror("PDF解析失败", f"无法解析 .pdf 文件:\n{e}")
+                    self.is_running_action = False
+                self.root.after(0, show_error_and_reset)
+
+        # 启动后台处理线程
+        threading.Thread(target=pdf_processing_thread, daemon=True).start()
 
     def handle_text_based_file(self, filepath, prompt=None):
         """
@@ -474,3 +535,14 @@ class MainController:
             task_type="image_from_path",
             task_data=filepath
         )
+    def show_result_window_for_multimodal(self, prompt, task_type, task_data_tuple):
+        """专门为多模态任务（如PDF）调用结果窗口"""
+        log("[LOG-C8-MM] show_result_window_for_multimodal 被调用。")
+        result_win = ResultWindow(
+            model=self.gemini_model, 
+            config_manager=self.config_manager,
+            prompt=prompt,
+            task_type=task_type,
+            task_data=task_data_tuple # task_data现在是一个元组 (text, [image1, image2, ...])
+        )
+        result_win.protocol("WM_DELETE_WINDOW", lambda: self.on_result_window_close(result_win))

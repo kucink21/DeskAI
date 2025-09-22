@@ -235,26 +235,35 @@ class ResultWindow(tk.Toplevel):
 
     def process_initial_request(self):
         """通用处理函数，根据任务类型发送初始请求"""
-        self.display_message("正在分析...\n")
+        self.display_message("正在分析...\n  · 大文件需要更长时间，请耐心等待... \n  · API timeout设置为20秒")
         self.attributes('-topmost', True); self.focus_force(); self.attributes('-topmost', False)
         
-        timeout_seconds = 12
+        timeout_seconds = 20
         self.timeout_job = self.after(timeout_seconds * 1000, self.on_timeout)
         log(f"已设置 {timeout_seconds} 秒的API调用超时定时器。")
 
         def background_task():
             try:
+                # --- 新的多模态请求构建逻辑 ---
                 content_parts = [self.initial_prompt]
                 
-                # --- 修改这里的逻辑 ---
-                if self.task_type == 'image': # 来自截图
-                    image_path = self.task_data
-                    if not os.path.exists(image_path):
-                        raise FileNotFoundError(f"找不到截图文件: {image_path}")
-                    self.loaded_image = Image.open(image_path)
-                    content_parts.append(self.loaded_image)
-                
-                elif self.task_type == 'image_from_path': # 来自文件拖放
+                if self.task_type == 'pdf_multimodal':
+                    # task_data 是一个元组: (text, [image1, image2, ...])
+                    pdf_text, pdf_images = self.task_data
+                    
+                    # 首先添加文本部分
+                    if pdf_text:
+                        content_parts.append(pdf_text)
+                    
+                    # 然后添加所有图片部分
+                    # Gemini 1.5 Pro 可以接受一个包含多个图片和文本的列表
+                    if pdf_images:
+                        content_parts.extend(pdf_images)
+                    
+                    # 为了在聊天历史中引用，我们只保存第一张图片
+                    self.loaded_image = pdf_images[0] if pdf_images else None
+
+                elif self.task_type in ['image', 'image_from_path']:
                     image_path = self.task_data
                     if not os.path.exists(image_path):
                         raise FileNotFoundError(f"找不到图片文件: {image_path}")
@@ -262,18 +271,18 @@ class ResultWindow(tk.Toplevel):
                     content_parts.append(self.loaded_image)
 
                 elif self.task_type == 'text':
-                    clipboard_text = self.task_data
-                    # --- 新增逻辑 ---
-                    if clipboard_text: # 只有当task_data不为空时才添加
-                        content_parts.append(clipboard_text)
+                    text_data = self.task_data
+                    if text_data:
+                        content_parts.append(text_data)
                 
                 else:
                     raise ValueError(f"未知的任务类型: {self.task_type}")
 
-                # 发送请求
+                # 发送请求 (这部分代码保持不变)
+                log(f"正在向Gemini发送请求，包含 {len(content_parts)} 个部分...")
                 response = self.model.generate_content(
                     content_parts,
-                    request_options={"timeout": timeout_seconds} 
+                    request_options={"timeout": 60} # PDF处理可能需要更长的超时时间
                 )
                 result_text = response.text.strip()
                 result_error = None
@@ -459,7 +468,7 @@ class ResultWindow(tk.Toplevel):
         if error:
             log("update ui发生错误")
             # 如果有错误，显示错误信息
-            error_message = f"发生错误: {error}"
+            error_message = f"发生错误: {error} \n请检查网络连接和代理设置，以及API Key\n如果更新了API Key，请重启应用。"
             self.display_message(error_message)
             # 也可以在这里弹窗，效果更强烈
             messagebox.showerror("API 调用失败", error_message)
@@ -475,8 +484,16 @@ class ResultWindow(tk.Toplevel):
             if self.task_type in ['image', 'image_from_path'] and self.loaded_image:
                 history_user_parts.append(self.loaded_image)
             elif self.task_type == 'text':
-                history_user_parts.append(self.task_data)
-
+                if self.task_data: # 确保非空
+                    history_user_parts.append(self.task_data)
+            elif self.task_type == 'pdf_multimodal':
+                # 对于PDF，历史记录里包含文本和所有图片
+                pdf_text, pdf_images = self.task_data
+                if pdf_text:
+                    history_user_parts.append(pdf_text)
+                if pdf_images:
+                    history_user_parts.extend(pdf_images)
+            
             self.chat_session = self.model.start_chat(history=[
                 {'role': 'user', 'parts': history_user_parts},
                 {'role': 'model', 'parts': [text]}
