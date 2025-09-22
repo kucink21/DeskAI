@@ -16,6 +16,7 @@ dist/
 /v1-1
 /historic_releases
 /old
+/api_tests
 
 temp_screenshot.png
 *.log

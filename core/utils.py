@@ -67,17 +67,6 @@ def set_proxy(config_proxy_url):
         log("最终未设置代理，将进行直接连接。")
     return final_proxy
 
-def configure_gemini(api_key, model_name, proxy_url=None):
-    """配置Gemini模型"""
-    try:
-        genai.configure(api_key=api_key, transport='rest')
-        model = genai.GenerativeModel(model_name)
-        log(f"Gemini model '{model_name}' set successfully using REST transport")
-        return model
-    except Exception as e:
-        log(f"Gemini model failed: {e}")
-        return None
-
 def get_screen_scaling_factor():
     """获取屏幕缩放因子"""
     try:

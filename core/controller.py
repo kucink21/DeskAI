@@ -13,8 +13,10 @@ import json
 import sys
 import tempfile
 import subprocess
+import importlib
 
 # 导入我们自己的模块
+from . import gemini_provider, openai_provider
 from features.floating_ball import FloatingBall
 from features.instructions_window import InstructionsWindow
 from features.settings_window import SettingsWindow
@@ -23,7 +25,10 @@ from .memory_manager import MemoryManager
 from features.memory_window import MemoryWindow
 from .config_manager import ConfigManager
 from .ui import ScreenshotTaker, ResultWindow
-from .utils import log, set_proxy, configure_gemini, get_screen_scaling_factor
+from .utils import log, set_proxy, get_screen_scaling_factor
+
+from .gemini_provider import GeminiProvider
+from .openai_provider import OpenAIProvider
 
 # 主控制器 
 class MainController:
@@ -33,8 +38,10 @@ class MainController:
         self.memory_manager = MemoryManager()
         self.user_memory = "" 
         self.config_manager = ConfigManager()
-        self.config = None
-        self.gemini_model = None
+        self.config = {}
+        self.models_config = {} # 新增：存放 models.json 的内容
+        #self.gemini_model = None
+        self.ai_provider = None 
         self.scaling_factor = 1.0
         self.current_pressed = set()
         self.hotkey_actions = {} 
@@ -153,24 +160,75 @@ class MainController:
         #log(f"按键释放，重置快捷键状态。")
 
     def setup_from_config(self):
-        """根据加载的配置初始化应用，失败则返回False"""
-        # 提前设置代理，并获取返回的代理地址
-        proxy_url = set_proxy(self.config.get("proxy_url", ""))
+        """
+        加载所有配置，并根据用户的选择初始化AI服务提供者。
+        """
+        self.config = self.config_manager.load_json("config.json")
+        self.models_config = self.config_manager.load_json("models.json")
 
-        model_name = self.config.get("model_name", "gemini-1.5-flash-latest")
-        
-        # 将获取到的代理地址传给 configure_gemini
-        self.gemini_model = configure_gemini(
-            api_key=self.config.get("api_key", ""), 
-            model_name=model_name,
-            proxy_url=proxy_url
-        )
-
-        if not self.gemini_model:
-            self.show_error_and_exit(f"Gemini配置错误: API Key 无效、网络问题或模型名称 '{model_name}' 不正确。\n\n请检查 config.json 文件和代理设置。\n如果更新了API key，请重启程序以生效。")
+        if not self.config or not self.models_config:
+            self.show_error_and_exit("无法加载 config.json 或 models.json。请确保文件存在且格式正确。")
             return False
 
-        # 先把 actions 从 config 中取出来
+        proxy_url = self.config.get("proxy_url", "")
+        api_keys = self.config.get("api_keys", {})
+
+        # 获取用户选择的模型提供商
+        # 如果用户没设置过，则默认使用 models.json 中的第一个提供商
+        provider_names = list(self.models_config.get("providers", {}).keys())
+        if not provider_names:
+            self.show_error_and_exit("models.json 中未定义任何提供商。")
+            return False
+        selected_provider_name = self.config.get("selected_provider", provider_names[0])
+        
+        provider_info = self.models_config["providers"].get(selected_provider_name)
+        if not provider_info:
+            self.show_error_and_exit(f"在 models.json 中找不到提供商: {selected_provider_name}")
+            return False
+
+        # 获取用户选择的具体模型
+        # 如果用户没设置过，则默认使用该提供商下的第一个模型
+        available_models = provider_info.get("models", [])
+        if not available_models:
+            self.show_error_and_exit(f"提供商 '{selected_provider_name}' 在 models.json 中未定义任何模型。")
+            return False
+        selected_model_name = self.config.get("selected_model", available_models[0])
+
+        try:
+            log(f"正在初始化提供商: {selected_provider_name}, 模型: {selected_model_name}")
+            
+            provider_class_name = provider_info["provider_class"]
+            
+            # --- 清理后的 Key 和 Model 获取逻辑 ---
+            api_key_name_map = {
+                "google gemini": "google_gemini",
+                "openai": "openai"
+                # 未来在这里添加 "anthropic claude": "anthropic_claude"
+            }
+            api_key_name = api_key_name_map.get(selected_provider_name.lower())
+
+            if not api_key_name:
+                raise ValueError(f"未知的提供商名称 '{selected_provider_name}'，无法确定API Key。")
+
+            api_key = api_keys.get(api_key_name)
+            if not api_key:
+                raise ValueError(f"在 config.json 的 'api_keys' 中未找到 '{api_key_name}' 的 Key。")
+
+            # 动态加载 Provider 类
+            module_name = provider_class_name.replace("Provider", "").lower() + "_provider"
+            module = importlib.import_module(f".{module_name}", package="core")
+            ProviderClass = getattr(module, provider_class_name)
+
+            # 使用从 selected_model 读取的模型名称来实例化 Provider
+            provider = ProviderClass(model_name=selected_model_name, api_key=api_key)
+            provider.initialize_model(proxy_url=proxy_url)
+            self.ai_provider = provider
+
+        except Exception as e:
+            self.show_error_and_exit(f"AI模型初始化失败: {e}")
+            return False
+
+        # --- 后续快捷键解析等逻辑保持不变 ---
         actions = self.config.get("actions", {})
         if not actions:
             self.show_error_and_exit("配置文件中未找到 'actions' 配置项。")
@@ -264,31 +322,29 @@ class MainController:
             self._end_task() # 流程结束，重置标志
 
     def open_settings_window(self):
-        """打开设置窗口"""
         if self.floating_ball:
             self.floating_ball.reset_idle_timer()
-
-        # 创建设置窗口实例，传入当前配置和保存回调
-        SettingsWindow(self.root, self.config, self.save_config_and_update)
+        
+        SettingsWindow(
+            self.root, 
+            self.config, 
+            self.models_config, # <--- 新增
+            self.save_config_and_update
+        )
 
     def save_config_and_update(self, new_config):
-        """
-        接收来自设置窗口的新配置，更新内存并写入文件。
-        """
-        # 1. 更新内存中的配置
         self.config = new_config
         log("内存中的配置已更新。")
 
-        # 2. 持久化到 config.json 文件
-        try:
-            # config_manager.filepath 包含了正确的、带路径的文件名
-            filepath = self.config_manager.filepath
-            with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump(new_config, f, indent=2, ensure_ascii=False)
-            log(f"配置已成功写入到 {filepath}")
-        except Exception as e:
-            log(f"错误：无法写入配置文件: {e}")
-            messagebox.showerror("保存失败", f"无法将设置写入到 config.json 文件:\n{e}")
+        # 使用 ConfigManager 保存
+        if not self.config_manager.save_json("config.json", new_config):
+            messagebox.showerror("保存失败", "无法将设置写入到 config.json 文件。")
+            return
+
+        messagebox.showinfo(
+            "成功", 
+            "设置已保存！\n\n提示：模型、API Key、代理或快捷键的更改需要重启程序才能生效。"
+        )
     
     def create_widgets(self):
         """创建所有UI组件"""
@@ -412,23 +468,17 @@ class MainController:
         messagebox.showerror("启动错误", message, parent=temp_root)
         temp_root.destroy()
         self.exit_app()
+        
     def run(self):
         """启动主程序"""
         log("[LOG-C3] MainController.run() 启动。")
+        
         self.user_memory = self.memory_manager.load_memory()
-                
-        self.config = self.config_manager.load_config()
+        
+        # 不在这里加载config，把所有配置加载都交给 setup_from_config
+        # self.config = self.config_manager.load_json("config.json") # <-- 可以删除
 
-        if not self.config or not self.config.get("api_key"):
-            self.show_error_and_exit(
-                "配置文件 config.json 不存在或无效！\n\n"
-                "请在程序同级目录下创建 config.json 文件，\n"
-                "并填入您的 API Key 和其他配置。\n"
-                "API Key 可以在 https://aistudio.google.com/app/apikey 免费获取。\n"
-                "如果更新了API key，请重启程序以生效。"
-            )
-            return
-
+        # setup_from_config 会负责加载并检查所有配置
         if not self.setup_from_config():
             return
 
@@ -476,18 +526,7 @@ class MainController:
             log("截图完成，但未提供截图路径，任务异常结束。")
             self._end_task() 
         
-    def show_result_window(self, prompt, task_type, task_data):
-        log("[LOG-C8] show_result_window 被调用。")
-        if self.floating_ball: 
-            self.floating_ball.set_session_state(True)
-        result_win = ResultWindow(
-            model=self.gemini_model, 
-            config_manager=self.config_manager,
-            prompt=prompt,
-            task_type=task_type,
-            task_data=task_data
-        )
-        result_win.protocol("WM_DELETE_WINDOW", lambda: self.on_result_window_close(result_win))
+
         
     def on_result_window_close(self, window):
         window.destroy()
@@ -744,17 +783,25 @@ class MainController:
             task_type="image_from_path",
             task_data=filepath
         )
-    def show_result_window_for_multimodal(self, prompt, task_type, task_data_tuple):
-        """专门为多模态任务（如PDF）调用结果窗口"""
-        log("[LOG-C8-MM] show_result_window_for_multimodal 被调用。")
-        if self.floating_ball:
-            self.floating_ball.set_session_state(True) 
+        
+    def show_result_window(self, prompt, task_type, task_data):
+        log("[LOG-C8] show_result_window 被调用。")
         result_win = ResultWindow(
-            model=self.gemini_model, 
-            config_manager=self.config_manager,
+            ai_provider=self.ai_provider, # <--- 修改
             prompt=prompt,
             task_type=task_type,
-            task_data=task_data_tuple # task_data现在是一个元组
+            task_data=task_data
+        )
+        result_win.protocol("WM_DELETE_WINDOW", lambda: self.on_result_window_close(result_win))
+
+    # 修改 show_result_window_for_multimodal
+    def show_result_window_for_multimodal(self, prompt, task_type, task_data_tuple):
+        log("[LOG-C8-MM] show_result_window_for_multimodal 被调用。")
+        result_win = ResultWindow(
+            ai_provider=self.ai_provider, # <--- 修改
+            prompt=prompt,
+            task_type=task_type,
+            task_data=task_data_tuple
         )
         result_win.protocol("WM_DELETE_WINDOW", lambda: self.on_result_window_close(result_win))
 

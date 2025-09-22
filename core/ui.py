@@ -10,6 +10,10 @@ import customtkinter as ctk
 # 导入工具函数
 from .utils import log
 
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from .ai_provider import BaseAIProvider
+
 class ScreenshotTaker:
     def __init__(self, scaling_factor, on_done_callback, screenshot_path): # screenshot_path
         self.screenshot_path = screenshot_path 
@@ -105,13 +109,10 @@ class ScreenshotTaker:
 
 
 class ResultWindow(tk.Toplevel):
-    def __init__(self, model, config_manager, prompt, task_type, task_data):
+    def __init__(self, ai_provider: 'BaseAIProvider', prompt: str, task_type: str, task_data):
         super().__init__()
-        self.model = model
-        self.config_manager = config_manager
-        
-        # 新增: 存储传入的任务信息
-        self.initial_prompt = prompt
+        self.ai_provider = ai_provider # <--- 修改
+        self.prompt = prompt           # <--- prompt现在由控制器构建好
         self.task_type = task_type
         self.task_data = task_data
 
@@ -234,66 +235,27 @@ class ResultWindow(tk.Toplevel):
         self.disable_input()
 
     def process_initial_request(self):
-        """通用处理函数，根据任务类型发送初始请求"""
-        self.display_message("正在分析...\n  · 大文件需要更长时间，请耐心等待... \n  · API timeout设置为20秒")
+        self.display_message("正在分析...\n")
         self.attributes('-topmost', True); self.focus_force(); self.attributes('-topmost', False)
         
-        timeout_seconds = 20
+        timeout_seconds = 60 # 使用一个统一的较长超时
         self.timeout_job = self.after(timeout_seconds * 1000, self.on_timeout)
-        log(f"已设置 {timeout_seconds} 秒的API调用超时定时器。")
 
         def background_task():
             try:
-                # --- 新的多模态请求构建逻辑 ---
-                content_parts = [self.initial_prompt]
-                
-                if self.task_type == 'pdf_multimodal':
-                    # task_data 是一个元组: (text, [image1, image2, ...])
-                    pdf_text, pdf_images = self.task_data
-                    
-                    if pdf_text:
-                        content_parts.append(pdf_text)
-
-                    if pdf_images:
-                        content_parts.extend(pdf_images)
-                    
-                    self.loaded_image = pdf_images[0] if pdf_images else None
-
-                elif self.task_type in ['image', 'image_from_path']:
-                    image_path = self.task_data
-                    if not os.path.exists(image_path):
-                        raise FileNotFoundError(f"找不到图片文件: {image_path}")
-                    self.loaded_image = Image.open(image_path)
-                    content_parts.append(self.loaded_image)
-
-                elif self.task_type == 'text':
-                    text_data = self.task_data
-                    if text_data:
-                        content_parts.append(text_data)
-                
-                else:
-                    raise ValueError(f"未知的任务类型: {self.task_type}")
-
-                # 发送请求 (这部分代码保持不变)
-                log(f"正在向Gemini发送请求，包含 {len(content_parts)} 个部分...")
-                response = self.model.generate_content(
-                    content_parts,
-                    request_options={"timeout": 60} # PDF处理可能需要更长的超时时间
+                # 直接调用 provider 的方法，它会处理所有复杂的逻辑
+                result_text = self.ai_provider.generate_content(
+                    self.prompt,
+                    (self.task_type, self.task_data), # 将任务信息打包成元组传递
+                    timeout=timeout_seconds
                 )
-                result_text = response.text.strip()
                 result_error = None
-
             except Exception as e:
                 result_text = None
                 result_error = e
             
-            # 无论成功还是失败，取消超时定时器
-            if self.timeout_job:
-                self.after_cancel(self.timeout_job)
-                self.timeout_job = None
-                log("API调用已完成或失败，超时定时器已取消。")
+            if self.timeout_job: self.after_cancel(self.timeout_job); self.timeout_job = None
             
-            # 将结果调度回主线程更新UI
             self.after(0, lambda: self._update_ui(text=result_text, error=result_error))
 
         threading.Thread(target=background_task, daemon=True).start()
@@ -308,19 +270,40 @@ class ResultWindow(tk.Toplevel):
 
     def _send_and_display(self, question):
         try:
-            # 网络操作
-            response = self.chat_session.send_message(
-                question,
-                request_options={"timeout": 15}
-            )            
-            # 将结果调度回主线程
-            self.after(0, self.display_message, response.text.strip(), False, True)
+            # --- 适配不同类型的 session 对象 ---
+            # 如果是 OpenAI 的模拟 session (一个字典)
+            if isinstance(self.chat_session, dict) and "history" in self.chat_session:
+                # 1. 将新问题添加到历史记录中
+                self.chat_session["history"].append({'role': 'user', 'parts': [question]})
+                
+                # 2. OpenAI 无状态，所以我们调用主 generate_content 方法，并传入完整的历史
+                # (这是一个简化的实现，更复杂的需要 provider 提供 chat() 方法)
+                # 为了简单起见，我们这里重新构建一个 prompt 发送
+                history_text = "\n".join([f"{msg['role']}: {msg['parts'][0]}" for msg in self.chat_session['history']])
+                
+                # 我们将历史作为task_data发送，让provider来解析
+                response_text = self.ai_provider.generate_content(
+                    prompt=question, # 主问题
+                    task_data=('text', history_text), # 历史作为附加上下文
+                    timeout=15
+                )
+                # 3. 将模型的回复也添加到历史记录
+                self.chat_session["history"].append({'role': 'model', 'parts': [response_text]})
+            
+            # 如果是 Gemini 的原生 chat session
+            else:
+                response = self.chat_session.send_message(
+                    question,
+                    request_options={"timeout": 15}
+                )
+                response_text = response.text.strip()
+            # --- 适配结束 ---
+
+            self.after(0, self.display_message, response_text, False, True)
         
         except Exception as e:
-            # 将错误调度回主线程
             self.after(0, self.display_message, f"\n发生错误: {e}")
         finally:
-            # 将UI操作调度回主线程
             self.after(0, self.enable_input)
         
     def enable_input(self): self.entry.configure(state=tk.NORMAL); self.send_button.configure(state=tk.NORMAL)
@@ -472,26 +455,14 @@ class ResultWindow(tk.Toplevel):
             self.enable_input()
         
         elif text:
-            # 如果成功，显示结果并初始化聊天
             self.display_message(text, is_model=True)
             
-            # 动态构建聊天历史
-            history_user_parts = [self.initial_prompt]
-            if self.task_type in ['image', 'image_from_path'] and self.loaded_image:
-                history_user_parts.append(self.loaded_image)
-            elif self.task_type == 'text':
-                if self.task_data: # 确保非空
-                    history_user_parts.append(self.task_data)
-            elif self.task_type == 'pdf_multimodal':
-                # 对于PDF，历史记录里包含文本和所有图片
-                pdf_text, pdf_images = self.task_data
-                if pdf_text:
-                    history_user_parts.append(pdf_text)
-                if pdf_images:
-                    history_user_parts.extend(pdf_images)
-            
-            self.chat_session = self.model.start_chat(history=[
-                {'role': 'user', 'parts': history_user_parts},
+            # --- 新的聊天会话构建逻辑 ---
+            # 我们可以简化历史构建，因为 provider 内部处理了具体内容
+            # 这里仅为示例，更复杂的历史构建可以在 provider 内部完成
+            history = [
+                {'role': 'user', 'parts': [self.prompt]}, # 简化历史
                 {'role': 'model', 'parts': [text]}
-            ])
+            ]
+            self.chat_session = self.ai_provider.start_chat_session(history)
             self.enable_input()
