@@ -11,6 +11,8 @@ import threading
 from pptx import Presentation
 import json
 import sys
+import tempfile
+import subprocess
 
 # 导入我们自己的模块
 from features.floating_ball import FloatingBall
@@ -44,31 +46,59 @@ class MainController:
         InstructionsWindow(self.root)
 
     def restart_app(self):
-        """重启应用程序"""
+        """
+        通过创建一个在稳定工作目录下运行的、完全分离的外部批处理“引导”脚本来安全地重启应用程序。
+        此最终版本修复了 Windows 上的 Popen 参数冲突问题。
+        """
         log("正在准备重启应用程序...")
         
         try:
-            # 在退出当前进程之前，先启动一个新进程
-            # sys.executable 指的是当前运行的Python解释器
-            # sys.argv[0] 指的是我们程序的主入口文件 (main.py)
-            
-            # 为了确保新进程能找到所有模块，我们最好设置工作目录
-            # app_dir 的计算逻辑与 ConfigManager 类似
-            if getattr(sys, 'frozen', False):
-                app_dir = os.path.dirname(sys.executable)
-                main_script = sys.executable
-            else:
+            # 开发环境逻辑保持不变
+            if not getattr(sys, 'frozen', False):
+                log("开发环境重启...")
                 app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                main_script = os.path.join(app_dir, 'main.py')
+                main_script_path = os.path.join(app_dir, 'main.py')
+                command = [sys.executable, main_script_path]
+                # 在开发模式下，close_fds=True 是安全的
+                subprocess.Popen(command, cwd=app_dir, close_fds=True)
+                self.exit_app()
+                return
 
-            log(f"启动新进程: {sys.executable} {main_script}")
+            # --- 以下是打包后 (.exe) 的终极重启逻辑 ---
+            executable_path = sys.executable
             
-            # 使用 subprocess.Popen 启动一个完全分离的新进程
-            import subprocess
-            subprocess.Popen([sys.executable, main_script], cwd=app_dir)
+            temp_dir = tempfile.gettempdir()
+            batch_file_path = os.path.join(temp_dir, f"gemini_helper_restart_{os.getpid()}.bat")
+            
+            # 批处理脚本内容保持不变
+            batch_script_content = f"""
+    @echo off
+    rem 等待2秒，确保旧进程和其临时文件夹已被清理
+    timeout /t 2 /nobreak > nul
 
-            # 启动新进程后，立即干净地退出当前进程
-            log("新进程已启动，正在退出当前进程...")
+    rem 使用绝对路径重新启动应用程序
+    start "" "{executable_path}"
+
+    rem 删除此批处理脚本自身
+    (goto) 2>nul & del "%~f0"
+    """
+            with open(batch_file_path, "w", encoding="utf-8") as f:
+                f.write(batch_script_content)
+
+            log(f"已创建引导重启脚本: {batch_file_path}")
+            
+            # --- 关键修改：移除冲突的 close_fds=True 参数 ---
+            command_to_run = ['cmd', '/c', batch_file_path]
+            
+            subprocess.Popen(
+                command_to_run,
+                cwd=temp_dir,
+                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_CONSOLE
+                # close_fds=True # <--- 在Windows和DETACHED_PROCESS组合使用时移除此参数
+            )
+            # --- 修改结束 ---
+
+            # 立即退出当前应用程序
             self.exit_app()
 
         except Exception as e:

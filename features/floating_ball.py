@@ -254,9 +254,9 @@ class FloatingBall:
         ctk.CTkFrame(menu_frame, height=2, fg_color="#555555").pack(fill="x", padx=10, pady=5)
 
         # --- 新增的重启和退出按钮 ---
-        ctk.CTkButton(menu_frame, text="重启", font=button_font, height=button_height, width=width,
+        """ctk.CTkButton(menu_frame, text="重启", font=button_font, height=button_height, width=width,
                     fg_color="transparent", hover_color="#555555",
-                    command=self.on_restart_callback).pack(fill="x", padx=10, pady=5)
+                    command=self.on_restart_callback).pack(fill="x", padx=10, pady=5)"""
 
         ctk.CTkButton(menu_frame, text="退出", font=button_font, height=button_height, width=width,
                     fg_color="transparent", hover_color="#ff4d4d", # 给退出按钮一个警示色
