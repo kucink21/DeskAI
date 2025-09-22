@@ -8,8 +8,14 @@ import docx
 import fitz
 from PIL import Image
 import threading
+from pptx import Presentation
+import json
+import sys
+
 # 导入我们自己的模块
 from features.floating_ball import FloatingBall
+from features.instructions_window import InstructionsWindow
+from features.settings_window import SettingsWindow
 from features.tray_icon import TrayIcon
 from .config_manager import ConfigManager
 from .ui import ScreenshotTaker, ResultWindow
@@ -19,6 +25,7 @@ from .utils import log, set_proxy, configure_gemini, get_screen_scaling_factor
 class MainController:
     def __init__(self, root):
         log("[LOG-C1] MainController 初始化。")
+        self.listener = None 
         self.config_manager = ConfigManager()
         self.config = None
         self.gemini_model = None
@@ -30,6 +37,66 @@ class MainController:
         self.floating_ball = None
         self.tray_icon = None
 
+    def open_instructions_window(self):
+        """打开使用说明窗口"""
+        if self.floating_ball:
+            self.floating_ball.reset_idle_timer()
+        InstructionsWindow(self.root)
+
+    def restart_app(self):
+        """重启应用程序"""
+        log("正在准备重启应用程序...")
+        
+        try:
+            # 在退出当前进程之前，先启动一个新进程
+            # sys.executable 指的是当前运行的Python解释器
+            # sys.argv[0] 指的是我们程序的主入口文件 (main.py)
+            
+            # 为了确保新进程能找到所有模块，我们最好设置工作目录
+            # app_dir 的计算逻辑与 ConfigManager 类似
+            if getattr(sys, 'frozen', False):
+                app_dir = os.path.dirname(sys.executable)
+                main_script = sys.executable
+            else:
+                app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                main_script = os.path.join(app_dir, 'main.py')
+
+            log(f"启动新进程: {sys.executable} {main_script}")
+            
+            # 使用 subprocess.Popen 启动一个完全分离的新进程
+            import subprocess
+            subprocess.Popen([sys.executable, main_script], cwd=app_dir)
+
+            # 启动新进程后，立即干净地退出当前进程
+            log("新进程已启动，正在退出当前进程...")
+            self.exit_app()
+
+        except Exception as e:
+            log(f"重启失败: {e}")
+            messagebox.showerror("重启失败", f"无法重启应用程序:\n{e}")
+
+    def _start_task(self, task_name="新任务"):
+        """
+        所有任务的统一入口。负责检查状态、设置代理和更新标志。
+        如果可以开始任务，返回 True；如果当前正忙，返回 False。
+        """
+        if self.is_running_action:
+            log(f"警告：当前已有任务在运行，任务 '{task_name}' 的触发被忽略。")
+            messagebox.showwarning("忙碌中", "请等待上一个任务完成。")
+            return False
+        
+        log(f"---------- {task_name} 开始 ----------")
+        # 1. 重新检查并设置代理
+        set_proxy(self.config.get("proxy_url", ""))
+        
+        # 2. 设置运行状态标志
+        self.is_running_action = True
+        return True
+
+    def _end_task(self):
+        """所有任务的统一结束点。负责重置状态标志。"""
+        self.is_running_action = False
+        log("任务结束，返回待机状态。")
     def on_press(self, key):
         # 如果有任务在运行，直接忽略任何按键，防止冲突
         if self.is_running_action:
@@ -126,22 +193,18 @@ class MainController:
         return keys
 
     def trigger_action(self, action_name):
-        """根据动作名称触发相应的流程"""
-        if self.is_running_action:
-            log("警告：当前已有任务在运行，本次触发被忽略。")
-            return
-        
-        log(f"---------- 新任务开始 ({action_name}) ----------")
-        self.is_running_action = True # 在流程开始时就设置标志
-        set_proxy(self.config.get("proxy_url", ""))
+        """根据快捷键动作名称触发相应的流程"""
+        if not self._start_task(f"快捷键任务 ({action_name})"):
+            return # 如果任务启动失败（正忙），则直接返回
 
+        # 如果任务成功启动，则继续执行
         if action_name == "screenshot":
             self.start_screenshot_flow()
         elif action_name == "clipboard_text":
             self.start_clipboard_flow()
         else:
             log(f"错误: 未知的动作名称 '{action_name}'")
-            self.is_running_action = False # 未知动作，重置标志
+            self._end_task() # 未知动作，立即结束任务
 
     def start_clipboard_flow(self):
         """处理剪贴板文本的流程"""
@@ -149,7 +212,7 @@ class MainController:
             clipboard_content = self.root.clipboard_get()
             if not clipboard_content.strip():
                 messagebox.showinfo("提示", "剪贴板内容为空。")
-                self.is_running_action = False # 流程结束，重置标志
+                self._end_task() # 流程结束，重置标志
                 return
             
             action_config = self.config["actions"]["clipboard_text"]
@@ -164,45 +227,99 @@ class MainController:
 
         except tk.TclError:
             messagebox.showinfo("提示", "无法从剪贴板获取文本内容。")
-            self.is_running_action = False # 流程结束，重置标志
+            self._end_task() # 流程结束，重置标志
         except Exception as e:
             messagebox.showerror("错误", f"处理剪贴板时发生未知错误: {e}")
             log(f"处理剪贴板时发生未知错误: {e}")
-            self.is_running_action = False # 流程结束，重置标志
-            
+            self._end_task() # 流程结束，重置标志
+
+    def open_settings_window(self):
+        """打开设置窗口"""
+        if self.floating_ball:
+            self.floating_ball.reset_idle_timer()
+
+        # 创建设置窗口实例，传入当前配置和保存回调
+        SettingsWindow(self.root, self.config, self.save_config_and_update)
+
+    def save_config_and_update(self, new_config):
+        """
+        接收来自设置窗口的新配置，更新内存并写入文件。
+        """
+        # 1. 更新内存中的配置
+        self.config = new_config
+        log("内存中的配置已更新。")
+
+        # 2. 持久化到 config.json 文件
+        try:
+            # config_manager.filepath 包含了正确的、带路径的文件名
+            filepath = self.config_manager.filepath
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(new_config, f, indent=2, ensure_ascii=False)
+            log(f"配置已成功写入到 {filepath}")
+        except Exception as e:
+            log(f"错误：无法写入配置文件: {e}")
+            messagebox.showerror("保存失败", f"无法将设置写入到 config.json 文件:\n{e}")
+    
     def create_widgets(self):
-        """创建所有UI组件，如悬浮球和托盘图标"""
+        """创建所有UI组件"""
+        
+        # --- 创建包装后的回调函数 ---
+        def start_chat_and_close_menu():
+            if self.floating_ball: self.floating_ball.close_menu()
+            self.start_temporary_chat()
+
+        def hide_ball_and_close_menu():
+            if self.floating_ball: self.floating_ball.close_menu()
+            self.hide_ball_to_tray()
+
+        def open_settings_and_close_menu():
+            if self.floating_ball: self.floating_ball.close_menu()
+            self.open_settings_window()
+            
+        def open_instructions_and_close_menu(): # <--- 新增这个包装函数
+            if self.floating_ball: self.floating_ball.close_menu()
+            self.open_instructions_window()
+
+        def restart_and_close_menu():
+            if self.floating_ball: self.floating_ball.close_menu()
+            self.restart_app()
+
+        def exit_and_close_menu():
+            if self.floating_ball: self.floating_ball.close_menu()
+            self.exit_app()
+
+        # --- 实例化悬浮球，并传入所有回调 ---
         self.floating_ball = FloatingBall(
             master=self.root,
-            on_start_chat_callback=self.start_temporary_chat,
-            on_hide_callback=self.hide_ball_to_tray,
-            on_drop_callback=self.handle_drop_data # <--- 新增这一行
+            on_start_chat_callback=start_chat_and_close_menu,
+            on_hide_callback=hide_ball_and_close_menu,
+            on_drop_callback=self.handle_drop_data,
+            on_settings_callback=open_settings_and_close_menu,
+            on_instructions_callback=open_instructions_and_close_menu, # <--- 新增这一行
+            on_restart_callback=restart_and_close_menu,
+            on_exit_callback=exit_and_close_menu
         )
+        
+        # --- 实例化托盘图标 (保持不变) ---
         self.tray_icon = TrayIcon(
             on_show_callback=self.show_ball_from_tray,
             on_exit_callback=self.exit_app
         )
 
+
     def start_temporary_chat(self):
         """由悬浮球触发，启动一个临时的纯文本聊天"""
         if self.floating_ball:
-            self.floating_ball.reset_idle_timer() 
-        if self.is_running_action:
-            log("警告：当前已有任务在运行，本次触发被忽略。")
-            messagebox.showwarning("忙碌中", "请等待上一个任务完成。")
+            self.floating_ball.reset_idle_timer()
+
+        if not self._start_task("悬浮球新对话"):
             return
 
-        log("---------- 悬浮球任务开始（临时对话）----------")
-        self.is_running_action = True
-        
-        # 这里的 prompt 只是为了启动对话，可以自定义
         prompt = "你好！"
-        
-        # task_data 为空，表示这是一个纯粹的、无上下文的对话开始
         self.show_result_window(
             prompt=prompt,
             task_type="text",
-            task_data="" 
+            task_data=""
         )
 
     def hide_ball_to_tray(self):
@@ -231,15 +348,24 @@ class MainController:
     def exit_app(self):
         """干净地退出整个应用程序"""
         log("正在退出应用程序...")
+        
+        # --- 新增的关键代码 ---
+        if self.listener and self.listener.is_alive():
+            log("正在停止键盘监听器...")
+            self.listener.stop()
+            # (可选) self.listener.join() # 可以等待线程完全停止，但通常stop()就够了
+        # --- 新增代码结束 ---
+        
         if self.tray_icon:
             self.tray_icon.stop()
         if self.floating_ball:
             self.floating_ball.destroy()
         if self.root:
             self.root.quit()
-            self.root.destroy()
+            # self.root.destroy() # quit() 之后 mainloop 结束，destroy() 可能会引发错误
+        
         log("应用程序已退出。")
-        # 使用 os._exit(0) 确保所有线程都被强制终止
+        # os._exit(0) 应该只作为最后的手段，现在我们有了更优雅的退出方式，可以先注释掉它
         os._exit(0)
 
     # 我们需要修改 show_error_and_exit
@@ -284,8 +410,9 @@ class MainController:
             hotkey_str = actions_config.get(name, {}).get("hotkey", "未知")
             log(f"  -> {name}: {hotkey_str.upper()}")
         
-        listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release)
-        listener.start()
+
+        self.listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release)
+        self.listener.start()
         
         # 我们需要在 run 的最后确保 WM_DELETE_WINDOW 协议被设置
         self.root.protocol("WM_DELETE_WINDOW", self.exit_app)
@@ -303,8 +430,8 @@ class MainController:
     
     def screenshot_done(self, cancelled=False, screenshot_path=None):
         if cancelled:
-            self.is_running_action = False
             log("截图任务被取消。")
+            self._end_task() # 使用新的结束方法
         elif screenshot_path:
             action_config = self.config["actions"]["screenshot"]
             prompt = action_config.get("prompt", "请描述这张图片:")
@@ -314,8 +441,8 @@ class MainController:
                 task_data=screenshot_path
             )
         else:
-            log("截图完成，但未提供截图路径。")
-            self.is_running_action = False
+            log("截图完成，但未提供截图路径，任务异常结束。")
+            self._end_task() # 异常情况也要结束任务
         
     def show_result_window(self, prompt, task_type, task_data):
         log("[LOG-C8] show_result_window 被调用。")
@@ -329,24 +456,18 @@ class MainController:
         result_win.protocol("WM_DELETE_WINDOW", lambda: self.on_result_window_close(result_win))
         
     def on_result_window_close(self, window):
-        self.is_running_action = False
         window.destroy()
-        log("返回待机状态。")
+        self._end_task()
 
     def handle_drop_data(self, data):
-        """
-        拖放数据的总入口和调度中心。
-        """
-        if self.is_running_action:
-            messagebox.showwarning("忙碌中", "请等待上一个任务完成。")
+        """拖放数据的总入口和调度中心。"""
+        if not self._start_task("悬浮球拖放任务"):
             return
 
-        # 清理数据，移除可能的 {}
         cleaned_data = data.strip()
         if cleaned_data.startswith('{') and cleaned_data.endswith('}'):
             cleaned_data = cleaned_data[1:-1]
 
-        # 判断是文件路径还是纯文本
         if os.path.exists(cleaned_data):
             self.process_dropped_files([cleaned_data])
         else:
@@ -355,7 +476,7 @@ class MainController:
     def process_dropped_text(self, text_content):
         """处理拖放的纯文本"""
         log("处理拖放的纯文本...")
-        self.is_running_action = True
+        # self.is_running_action = True <--- 删除这行，_start_task 已经处理
         
         action_config = self.config["actions"].get("clipboard_text", {})
         prompt = action_config.get("prompt", "请处理以下文本:")
@@ -369,48 +490,45 @@ class MainController:
     def process_dropped_files(self, filepaths):
         """处理拖放的文件列表，并根据文件类型分发任务。"""
         if not filepaths:
+            self._end_task() # 如果没有文件路径，直接结束任务
             return
             
         filepath = filepaths[0]
         log(f"处理拖放的文件: {filepath}")
-        self.is_running_action = True
+        # self.is_running_action = True <--- 删除这行，_start_task 已经处理
 
         ext = os.path.splitext(filepath)[1].lower()
         
         # --- 智能选择 Prompt 和处理方式 ---
         
-        # 1. 优先检查是否是为 drop_handlers 特别定义的类型
         drop_handlers_config = self.config.get("drop_handlers", {})
         if ext in drop_handlers_config:
             handler_info = drop_handlers_config[ext]
             prompt = handler_info.get("prompt", f"请处理这个 {ext} 文件。")
             log(f"使用为 '{ext}' 类型定义的专属 prompt。")
             
-            # 根据扩展名调用不同的处理函数
             if ext == ".docx":
                 self.handle_docx_file(filepath, prompt)
             elif ext == ".pdf":
                 self.handle_pdf_file(filepath, prompt)
-            elif ext in [".py", ".js", ".html", ".css", ".java", ".cpp"]: # 可以把所有代码文件都归到这里
+            elif ext == ".pptx": 
+                self.handle_pptx_file(filepath, prompt)
+            elif ext in [".py", ".js", ".html", ".css", ".java", ".cpp"]:
                 self.handle_text_based_file(filepath, prompt)
-            else: # 其他在 drop_handlers 中定义的、但没有特殊处理器的类型
+            else:
                 self.handle_text_based_file(filepath, prompt)
             return
 
-        # 2. 如果没有专属定义，则回退到通用的旧逻辑
         if ext in ['.png', '.jpg', '.jpeg', '.bmp', '.webp']:
             log("回退到通用的图片处理逻辑。")
-            self.handle_dropped_image(filepath) # 复用 screenshot prompt
-        
-        elif ext in ['.txt', '.md', '.json']: # <-- 注意：.py 已从此列表移除
+            self.handle_dropped_image(filepath)
+        elif ext in ['.txt', '.md', '.json']:
             log("回退到通用的文本文件处理逻辑。")
-            self.handle_text_based_file(filepath, None) # 传入None，复用 clipboard prompt
-        
+            self.handle_text_based_file(filepath, None)
         else:
-            # 真正不支持的格式
             unsupported_message = f"不支持的文件类型: {ext}\n\n当前支持图片、文本和部分文档格式。"
             log(unsupported_message)
-            self.is_running_action = False
+            self._end_task()
             messagebox.showinfo("操作失败", unsupported_message)
 
     def handle_pdf_file(self, filepath, prompt):
@@ -465,7 +583,7 @@ class MainController:
                 # 确保在主线程中显示错误并重置状态
                 def show_error_and_reset():
                     messagebox.showerror("PDF解析失败", f"无法解析 .pdf 文件:\n{e}")
-                    self.is_running_action = False
+                    self._end_task()
                 self.root.after(0, show_error_and_reset)
 
         # 启动后台处理线程
@@ -487,7 +605,7 @@ class MainController:
         except Exception as e:
             log(f"读取文件失败: {filepath}, 错误: {e}")
             messagebox.showerror("读取失败", f"无法读取文件内容:\n{e}")
-            self.is_running_action = False
+            self._end_task()
             return
             
         self.show_result_window(
@@ -516,12 +634,64 @@ class MainController:
         except Exception as e:
             log(f"解析 .docx 文件失败: {filepath}, 错误: {e}")
             messagebox.showerror("解析失败", f"无法解析 .docx 文件:\n{e}")
-            self.is_running_action = False
+            self._end_task()
             return
 
         self.show_result_window(
             prompt=prompt,
             task_type="text", # docx内容也是文本
+            task_data=content
+        )
+
+    def handle_pptx_file(self, filepath, prompt):
+        """
+        具体处理 .pptx 文件的逻辑。
+        提取所有幻灯片的文本内容。
+        """
+        log(f"正在从 .pptx 文件提取文本: {filepath}")
+        try:
+            prs = Presentation(filepath)
+            full_text = []
+            
+            # 设置一个最大处理幻灯片数量的上限
+            MAX_SLIDES_TO_PROCESS = 100
+            slides_to_process = len(prs.slides)
+            if slides_to_process > MAX_SLIDES_TO_PROCESS:
+                log(f"警告：PPT页数过多，仅处理前 {MAX_SLIDES_TO_PROCESS} 页。")
+                slides_to_process = MAX_SLIDES_TO_PROCESS
+            
+            log(f"PPT共有 {len(prs.slides)} 页。开始提取内容...")
+
+            for i, slide in enumerate(prs.slides):
+                if i >= slides_to_process:
+                    break
+                
+                # 为每一页添加一个标题，让AI更好地理解结构
+                full_text.append(f"\n--- 幻灯片 {i + 1} ---\n")
+                
+                # 遍历幻灯片中的所有形状 (shape)
+                for shape in slide.shapes:
+                    # 检查形状是否包含文本框
+                    if not shape.has_text_frame:
+                        continue
+                    # 遍历文本框中的所有段落
+                    for paragraph in shape.text_frame.paragraphs:
+                        # 遍历段落中的所有文本块 (run)
+                        for run in paragraph.runs:
+                            full_text.append(run.text)
+                log(f"  ...已处理第 {i+1}/{slides_to_process} 页")
+            
+            content = '\n'.join(full_text)
+
+        except Exception as e:
+            log(f"解析 .pptx 文件失败: {filepath}, 错误: {e}")
+            messagebox.showerror("解析失败", f"无法解析 .pptx 文件:\n{e}")
+            self._end_task()
+            return
+
+        self.show_result_window(
+            prompt=prompt,
+            task_type="text", # .pptx 的内容也被处理为纯文本
             task_data=content
         )
 

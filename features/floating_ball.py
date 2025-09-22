@@ -21,12 +21,16 @@ except ImportError:
 
 
 class FloatingBall:
-    def __init__(self, master, on_start_chat_callback, on_hide_callback, on_drop_callback):
+    def __init__(self, master, on_start_chat_callback, on_hide_callback, on_drop_callback, on_settings_callback, on_restart_callback, on_exit_callback, on_instructions_callback):
         self.master = master
         self.on_start_chat_callback = on_start_chat_callback
         self.on_hide_callback = on_hide_callback
         self.on_drop_callback = on_drop_callback
-        
+        self.on_settings_callback = on_settings_callback
+        self.on_restart_callback = on_restart_callback # <--- 新增
+        self.on_exit_callback = on_exit_callback       # <--- 新增
+        self.on_instructions_callback = on_instructions_callback
+
         self.ball_size = 120  # 保持尺寸
 
         self.window = tk.Toplevel(master)
@@ -219,7 +223,7 @@ class FloatingBall:
     # --- 其他所有方法 (on_drag_start, show_custom_menu 等) 保持原样 ---
     # ... 把你之前版本中 FloatingBall 类的其他所有方法原封不动地复制到这里 ...
     def on_drag_start(self, event):
-        if self.menu: self.menu.destroy(); self.menu = None
+        self.close_menu()
         self._drag_x, self._drag_y = event.x, event.y
         self.reset_idle_timer()
     def on_drag_motion(self, event):
@@ -231,15 +235,49 @@ class FloatingBall:
         self.reset_idle_timer()
         self.menu = tk.Toplevel(self.window); self.menu.overrideredirect(True); self.menu.wm_attributes("-topmost", True)
         menu_frame = ctk.CTkFrame(self.menu, corner_radius=10, fg_color="#333333"); menu_frame.pack(padx=1, pady=1)
-        button_font, button_height = ("微软雅黑", 14), 40
-        ctk.CTkButton(menu_frame, text="开始新对话", font=button_font, height=button_height, fg_color="transparent", hover_color="#555555", command=self.on_start_chat_callback).pack(fill="x", padx=10, pady=(10, 5))
-        ctk.CTkButton(menu_frame, text="隐藏悬浮球", font=button_font, height=button_height, fg_color="transparent", hover_color="#555555", command=self.on_hide_callback).pack(fill="x", padx=10, pady=(5, 10))
+        button_font, button_height, width = ("微软雅黑", 14), 30, 40
+        # 功能性按钮
+        ctk.CTkButton(menu_frame, text="开始新对话", font=button_font, height=button_height, width=width,
+                    fg_color="transparent", hover_color="#555555",
+                    command=self.on_start_chat_callback).pack(fill="x", padx=10, pady=(10, 5))
+
+        # 管理性按钮
+        ctk.CTkButton(menu_frame, text="设置", font=button_font, height=button_height, width=width,
+                    fg_color="transparent", hover_color="#555555",
+                    command=self.on_settings_callback).pack(fill="x", padx=10, pady=5)
+
+        ctk.CTkButton(menu_frame, text="隐藏悬浮球", font=button_font, height=button_height, width=width,
+                    fg_color="transparent", hover_color="#555555",
+                    command=self.on_hide_callback).pack(fill="x", padx=10, pady=5)
+
+        # 使用一个小的 Frame 来模拟分割线
+        ctk.CTkFrame(menu_frame, height=2, fg_color="#555555").pack(fill="x", padx=10, pady=5)
+
+        # --- 新增的重启和退出按钮 ---
+        ctk.CTkButton(menu_frame, text="重启", font=button_font, height=button_height, width=width,
+                    fg_color="transparent", hover_color="#555555",
+                    command=self.on_restart_callback).pack(fill="x", padx=10, pady=5)
+
+        ctk.CTkButton(menu_frame, text="退出", font=button_font, height=button_height, width=width,
+                    fg_color="transparent", hover_color="#ff4d4d", # 给退出按钮一个警示色
+                    command=self.on_exit_callback).pack(fill="x", padx=10, pady=(5, 10))
+
+        ctk.CTkButton(menu_frame, text="使用说明", font=button_font, height=button_height,
+                    fg_color="transparent", hover_color="#555555",
+                    command=self.on_instructions_callback).pack(fill="x", padx=10, pady=5)
         self.menu.update_idletasks()
         self.menu.geometry(f"{self.menu.winfo_width()}x{self.menu.winfo_height()}+{event.x_root}+{event.y_root}")
-        self.menu.bind("<FocusOut>", lambda e: self.menu.destroy() if self.menu else None)
+        self.menu.bind("<FocusOut>", self.close_menu)
         self.menu.focus_set()
+    def close_menu(self, event=None):
+        """统一的关闭菜单方法，确保焦点返回"""
+        if self.menu:
+            self.menu.destroy()
+            self.menu = None
+            # 将焦点还给悬浮球窗口
+            self.window.focus_force()
     def show(self): self.window.deiconify()
     def hide(self):
-        if self.menu: self.menu.destroy(); self.menu = None
+        self.close_menu() 
         self.window.withdraw()
     def destroy(self): self.window.destroy()
