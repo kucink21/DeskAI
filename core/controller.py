@@ -19,6 +19,8 @@ from features.floating_ball import FloatingBall
 from features.instructions_window import InstructionsWindow
 from features.settings_window import SettingsWindow
 from features.tray_icon import TrayIcon
+from .memory_manager import MemoryManager
+from features.memory_window import MemoryWindow
 from .config_manager import ConfigManager
 from .ui import ScreenshotTaker, ResultWindow
 from .utils import log, set_proxy, configure_gemini, get_screen_scaling_factor
@@ -28,6 +30,8 @@ class MainController:
     def __init__(self, root):
         log("[LOG-C1] MainController 初始化。")
         self.listener = None 
+        self.memory_manager = MemoryManager()
+        self.user_memory = "" 
         self.config_manager = ConfigManager()
         self.config = None
         self.gemini_model = None
@@ -53,7 +57,6 @@ class MainController:
         log("正在准备重启应用程序...")
         
         try:
-            # 开发环境逻辑保持不变
             if not getattr(sys, 'frozen', False):
                 log("开发环境重启...")
                 app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -64,7 +67,6 @@ class MainController:
                 self.exit_app()
                 return
 
-            # --- 以下是打包后 (.exe) 的终极重启逻辑 ---
             executable_path = sys.executable
             
             temp_dir = tempfile.gettempdir()
@@ -87,7 +89,6 @@ class MainController:
 
             log(f"已创建引导重启脚本: {batch_file_path}")
             
-            # --- 关键修改：移除冲突的 close_fds=True 参数 ---
             command_to_run = ['cmd', '/c', batch_file_path]
             
             subprocess.Popen(
@@ -96,9 +97,7 @@ class MainController:
                 creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_CONSOLE
                 # close_fds=True # <--- 在Windows和DETACHED_PROCESS组合使用时移除此参数
             )
-            # --- 修改结束 ---
 
-            # 立即退出当前应用程序
             self.exit_app()
 
         except Exception as e:
@@ -246,11 +245,12 @@ class MainController:
                 return
             
             action_config = self.config["actions"]["clipboard_text"]
-            prompt = action_config.get("prompt", "请处理这段文本:") # 默认值
+            task_prompt = action_config.get("prompt", "请处理这段文本:") 
+            final_prompt = self.build_prompt_with_memory(task_prompt) 
             
             log("成功获取剪贴板文本，准备显示结果窗口。")
             self.show_result_window(
-                prompt=prompt, 
+                prompt=final_prompt,
                 task_type="text", 
                 task_data=clipboard_content
             )
@@ -306,7 +306,7 @@ class MainController:
             if self.floating_ball: self.floating_ball.close_menu()
             self.open_settings_window()
             
-        def open_instructions_and_close_menu(): # <--- 新增这个包装函数
+        def open_instructions_and_close_menu(): 
             if self.floating_ball: self.floating_ball.close_menu()
             self.open_instructions_window()
 
@@ -317,6 +317,9 @@ class MainController:
         def exit_and_close_menu():
             if self.floating_ball: self.floating_ball.close_menu()
             self.exit_app()
+        def open_memory_and_close_menu():
+            if self.floating_ball: self.floating_ball.close_menu()
+            self.open_memory_window()
 
         # --- 实例化悬浮球，并传入所有回调 ---
         self.floating_ball = FloatingBall(
@@ -325,12 +328,13 @@ class MainController:
             on_hide_callback=hide_ball_and_close_menu,
             on_drop_callback=self.handle_drop_data,
             on_settings_callback=open_settings_and_close_menu,
-            on_instructions_callback=open_instructions_and_close_menu, # <--- 新增这一行
+            on_instructions_callback=open_instructions_and_close_menu,  
+            on_memory_callback=open_memory_and_close_menu,
             on_restart_callback=restart_and_close_menu,
             on_exit_callback=exit_and_close_menu
         )
         
-        # --- 实例化托盘图标 (保持不变) ---
+        # --- 实例化托盘图标---
         self.tray_icon = TrayIcon(
             on_show_callback=self.show_ball_from_tray,
             on_exit_callback=self.exit_app
@@ -345,9 +349,10 @@ class MainController:
         if not self._start_task("悬浮球新对话"):
             return
 
-        prompt = "你好！"
+        task_prompt = "你好！"
+        final_prompt = self.build_prompt_with_memory(task_prompt)
         self.show_result_window(
-            prompt=prompt,
+            prompt=final_prompt,
             task_type="text",
             task_data=""
         )
@@ -383,8 +388,7 @@ class MainController:
         if self.listener and self.listener.is_alive():
             log("正在停止键盘监听器...")
             self.listener.stop()
-            # (可选) self.listener.join() # 可以等待线程完全停止，但通常stop()就够了
-        # --- 新增代码结束 ---
+            self.listener.join() 
         
         if self.tray_icon:
             self.tray_icon.stop()
@@ -395,7 +399,6 @@ class MainController:
             # self.root.destroy() # quit() 之后 mainloop 结束，destroy() 可能会引发错误
         
         log("应用程序已退出。")
-        # os._exit(0) 应该只作为最后的手段，现在我们有了更优雅的退出方式，可以先注释掉它
         os._exit(0)
 
     # 我们需要修改 show_error_and_exit
@@ -412,9 +415,8 @@ class MainController:
     def run(self):
         """启动主程序"""
         log("[LOG-C3] MainController.run() 启动。")
-        # self.root = tk.Tk() <--- 删除
-        # self.root.withdraw() <--- 删除
-        
+        self.user_memory = self.memory_manager.load_memory()
+                
         self.config = self.config_manager.load_config()
 
         if not self.config or not self.config.get("api_key"):
@@ -444,7 +446,6 @@ class MainController:
         self.listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release)
         self.listener.start()
         
-        # 我们需要在 run 的最后确保 WM_DELETE_WINDOW 协议被设置
         self.root.protocol("WM_DELETE_WINDOW", self.exit_app)
         self.root.mainloop()
 
@@ -461,21 +462,24 @@ class MainController:
     def screenshot_done(self, cancelled=False, screenshot_path=None):
         if cancelled:
             log("截图任务被取消。")
-            self._end_task() # 使用新的结束方法
+            self._end_task() 
         elif screenshot_path:
             action_config = self.config["actions"]["screenshot"]
-            prompt = action_config.get("prompt", "请描述这张图片:")
+            task_prompt = action_config.get("prompt", "请描述这张图片:")
+            final_prompt = self.build_prompt_with_memory(task_prompt) 
             self.show_result_window(
-                prompt=prompt,
+                prompt=final_prompt,
                 task_type="image",
                 task_data=screenshot_path
             )
         else:
             log("截图完成，但未提供截图路径，任务异常结束。")
-            self._end_task() # 异常情况也要结束任务
+            self._end_task() 
         
     def show_result_window(self, prompt, task_type, task_data):
         log("[LOG-C8] show_result_window 被调用。")
+        if self.floating_ball: 
+            self.floating_ball.set_session_state(True)
         result_win = ResultWindow(
             model=self.gemini_model, 
             config_manager=self.config_manager,
@@ -487,6 +491,8 @@ class MainController:
         
     def on_result_window_close(self, window):
         window.destroy()
+        if self.floating_ball: 
+            self.floating_ball.set_session_state(False)
         self._end_task()
 
     def handle_drop_data(self, data):
@@ -501,18 +507,18 @@ class MainController:
         if os.path.exists(cleaned_data):
             self.process_dropped_files([cleaned_data])
         else:
-            self.process_dropped_text(data)
+            self.handle_dropped_text(data)
 
-    def process_dropped_text(self, text_content):
+    def handle_dropped_text(self, text_content):
         """处理拖放的纯文本"""
         log("处理拖放的纯文本...")
-        # self.is_running_action = True <--- 删除这行，_start_task 已经处理
         
         action_config = self.config["actions"].get("clipboard_text", {})
-        prompt = action_config.get("prompt", "请处理以下文本:")
+        task_prompt = action_config.get("prompt", "请处理以下文本:")
+        final_prompt = self.build_prompt_with_memory(task_prompt) 
         
         self.show_result_window(
-            prompt=prompt,
+            prompt=final_prompt,
             task_type="text",
             task_data=text_content
         )
@@ -525,7 +531,6 @@ class MainController:
             
         filepath = filepaths[0]
         log(f"处理拖放的文件: {filepath}")
-        # self.is_running_action = True <--- 删除这行，_start_task 已经处理
 
         ext = os.path.splitext(filepath)[1].lower()
         
@@ -604,9 +609,9 @@ class MainController:
                 content = "\n".join(full_text)
                 
                 # 将任务调度回主线程以显示结果窗口
-                # 注意：这里我们将图片列表和文本一起传递
+                final_prompt = self.build_prompt_with_memory(prompt)
                 self.root.after(0, self.show_result_window_for_multimodal, 
-                                prompt, "pdf_multimodal", (content, page_images))
+                                final_prompt, "pdf_multimodal", (content, page_images))
 
             except Exception as e:
                 log(f"解析 .pdf 文件失败: {filepath}, 错误: {e}")
@@ -628,6 +633,7 @@ class MainController:
             # 复用旧逻辑
             action_config = self.config["actions"].get("clipboard_text", {})
             prompt = action_config.get("prompt", "请分析以下文件内容:")
+        final_prompt = self.build_prompt_with_memory(prompt)
             
         try:
             with open(filepath, 'r', encoding='utf-8') as f:
@@ -639,7 +645,7 @@ class MainController:
             return
             
         self.show_result_window(
-            prompt=prompt,
+            prompt=final_prompt,
             task_type="text",
             task_data=content
         )
@@ -653,7 +659,7 @@ class MainController:
             for para in doc.paragraphs:
                 full_text.append(para.text)
             
-            # (可选) 提取表格内容
+            # 提取表格内容
             # for table in doc.tables:
             #     for row in table.rows:
             #         for cell in row.cells:
@@ -666,10 +672,11 @@ class MainController:
             messagebox.showerror("解析失败", f"无法解析 .docx 文件:\n{e}")
             self._end_task()
             return
+        final_prompt = self.build_prompt_with_memory(prompt)
 
         self.show_result_window(
-            prompt=prompt,
-            task_type="text", # docx内容也是文本
+            prompt=final_prompt,
+            task_type="text", 
             task_data=content
         )
 
@@ -718,9 +725,10 @@ class MainController:
             messagebox.showerror("解析失败", f"无法解析 .pptx 文件:\n{e}")
             self._end_task()
             return
+        final_prompt = self.build_prompt_with_memory(prompt)
 
         self.show_result_window(
-            prompt=prompt,
+            prompt=final_prompt,
             task_type="text", # .pptx 的内容也被处理为纯文本
             task_data=content
         )
@@ -729,20 +737,63 @@ class MainController:
         """具体处理图片文件的逻辑"""
         action_config = self.config["actions"].get("screenshot", {})
         prompt = action_config.get("prompt", "请描述这张图片:")
+        final_prompt = self.build_prompt_with_memory(prompt)
         
         self.show_result_window(
-            prompt=prompt,
+            prompt=final_prompt,
             task_type="image_from_path",
             task_data=filepath
         )
     def show_result_window_for_multimodal(self, prompt, task_type, task_data_tuple):
         """专门为多模态任务（如PDF）调用结果窗口"""
         log("[LOG-C8-MM] show_result_window_for_multimodal 被调用。")
+        if self.floating_ball:
+            self.floating_ball.set_session_state(True) 
         result_win = ResultWindow(
             model=self.gemini_model, 
             config_manager=self.config_manager,
             prompt=prompt,
             task_type=task_type,
-            task_data=task_data_tuple # task_data现在是一个元组 (text, [image1, image2, ...])
+            task_data=task_data_tuple # task_data现在是一个元组
         )
         result_win.protocol("WM_DELETE_WINDOW", lambda: self.on_result_window_close(result_win))
+
+    def build_prompt_with_memory(self, task_prompt: str) -> str:
+        """
+        将用户记忆与任务提示词结合，构建最终的、对AI友好的Prompt。
+        """
+        memory_content = self.user_memory.strip()
+        if not memory_content:
+            return task_prompt # 如果记忆库为空，直接返回原始任务prompt
+
+        # 使用结构化的XML标签式元提示，对大型语言模型非常有效
+        meta_prompt = f"""<SYSTEM_INSTRUCTION>
+    You are a personalized AI assistant. You MUST strictly adhere to the context and facts provided in the <USER_BACKGROUND> section to inform and tailor your response. This information is the ground truth about the user.
+    </SYSTEM_INSTRUCTION>
+
+    <USER_BACKGROUND>
+    {memory_content}
+    </USER_BACKGROUND>
+
+    Based on the context above, fulfill the following user request:
+    ---
+    {task_prompt}"""
+        
+        return meta_prompt
+
+    def open_memory_window(self):
+        """打开记忆编辑窗口"""
+        if self.floating_ball:
+            self.floating_ball.reset_idle_timer()
+        
+        # 将当前内存中的记忆和保存回调函数传递给窗口
+        MemoryWindow(self.root, self.user_memory, self.save_memory)
+
+    def save_memory(self, new_content: str) -> bool:
+        """
+        保存记忆的回调函数。
+        更新内存中的状态，并调用 MemoryManager 持久化。
+        """
+        self.user_memory = new_content
+        log("内存中的用户记忆已更新。")
+        return self.memory_manager.save_memory(new_content)

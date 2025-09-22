@@ -12,7 +12,7 @@ def setup_logging():
     if getattr(sys, 'frozen', False):
         app_dir = os.path.dirname(sys.executable)
     else:
-        app_dir = os.path.dirname(os.path.dirname(__file__)) # 注意这里是两层dirname
+        app_dir = os.path.dirname(os.path.dirname(__file__)) 
     log_filepath = os.path.join(app_dir, "log.txt")
 
     logger = logging.getLogger()

@@ -7,7 +7,7 @@ import os
 import threading
 import customtkinter as ctk
 
-# 导入我们自己的工具函数
+# 导入工具函数
 from .utils import log
 
 class ScreenshotTaker:
@@ -180,8 +180,8 @@ class ResultWindow(tk.Toplevel):
             input_frame,
             text="➤ 发送",
             font=("微软雅黑", 12, "bold"),
-            width=80,        # 这里改宽度，不要太小
-            height=40,       # 关键：设为和输入框一致
+            width=80,        
+            height=40,      
             fg_color="#2563EB",    # 背景色
             hover_color="#0E2B88", # 悬停颜色
             text_color="white",    # 字体颜色
@@ -251,16 +251,12 @@ class ResultWindow(tk.Toplevel):
                     # task_data 是一个元组: (text, [image1, image2, ...])
                     pdf_text, pdf_images = self.task_data
                     
-                    # 首先添加文本部分
                     if pdf_text:
                         content_parts.append(pdf_text)
-                    
-                    # 然后添加所有图片部分
-                    # Gemini 1.5 Pro 可以接受一个包含多个图片和文本的列表
+
                     if pdf_images:
                         content_parts.extend(pdf_images)
                     
-                    # 为了在聊天历史中引用，我们只保存第一张图片
                     self.loaded_image = pdf_images[0] if pdf_images else None
 
                 elif self.task_type in ['image', 'image_from_path']:

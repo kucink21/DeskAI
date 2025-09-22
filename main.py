@@ -12,7 +12,7 @@ def main():
     """程序主入口函数"""
     log("应用程序启动...")
     
-    # 严格地在创建任何窗口之前，设置DPI感知
+    # 在创建任何窗口之前，设置DPI感知
     try:
         ctypes.windll.shcore.SetProcessDpiAwarenessContext(-2)
         log("DPI感知级别已设置为 Per Monitor Aware。")

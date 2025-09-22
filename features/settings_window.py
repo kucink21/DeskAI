@@ -102,16 +102,14 @@ class SettingsWindow(ctk.CTkToplevel):
 
         value = self.get_config_value(config_path, "")
         
-        # --- 新增/修改：应用占位符 ---
         path_tuple = tuple(config_path)
-        placeholder_text = self.placeholders.get(path_tuple, None) # 查找占位符
+        placeholder_text = self.placeholders.get(path_tuple, None) 
 
         entry = ctk.CTkEntry(
             frame, 
             width=400,
-            placeholder_text=placeholder_text # <--- 设置占位符
+            placeholder_text=placeholder_text 
         )
-        # --- 修改结束 ---
 
         entry.insert(0, value)
         entry.pack(side="left", fill="x", expand=True)
@@ -134,7 +132,6 @@ class SettingsWindow(ctk.CTkToplevel):
 
         textbox = ctk.CTkTextbox(frame, height=100, wrap="word")
 
-        # 我们只需要一个状态标志
         state = {'is_placeholder': False}
 
         def on_focus_in(event):
@@ -160,7 +157,6 @@ class SettingsWindow(ctk.CTkToplevel):
             textbox.insert("1.0", value)
             state['is_placeholder'] = False
         else:
-            # 初始为空时，只记录状态，让后续的强制FocusOut来处理
             state['is_placeholder'] = True 
         
         textbox.pack(side="left", fill="x", expand=True)
@@ -187,7 +183,7 @@ class SettingsWindow(ctk.CTkToplevel):
             if isinstance(widget_info, ctk.CTkEntry):
                 value = widget_info.get()
             
-            elif isinstance(widget_info, tuple) and len(widget_info) == 3: # 这是我们的 Textbox
+            elif isinstance(widget_info, tuple) and len(widget_info) == 3:
                 textbox, placeholder, state = widget_info
                 # 直接通过状态标志判断，而不是比较文本内容
                 if state['is_placeholder']:
