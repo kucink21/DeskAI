@@ -4,53 +4,15 @@
   <img src="https://raw.githubusercontent.com/michaelz9436/DeskAI/main/assets/title.gif" alt="Gemini Screen Helper Icon" style="max-width:100%;">
 </p>
 
-<div align="center">
-  <table>
-    <tr>
-      <td align="center">
-        <img src="icon/gemini1.png" width="100px" alt="Gemini Idle"/>
-        <br />
-        <sub><b>Gemini (待机)</b></sub>
-      </td>
-      <td align="center">
-        <img src="icon/gemini2.png" width="100px" alt="Gemini Session"/>
-        <br />
-        <sub><b>Gemini (会话)</b></sub>
-      </td>
-      <td align="center">
-        <img src="icon/openai1.png" width="100px" alt="OpenAI Idle"/>
-        <br />
-        <sub><b>OpenAI (待机)</b></sub>
-      </td>
-      <td align="center">
-        <img src="icon/openai2.png" width="100px" alt="OpenAI Session"/>
-        <br />
-        <sub><b>OpenAI (会话)</b></sub>
-      </td>
-    </tr>
-    <tr>
-      <td align="center">
-        <img src="icon/claude1.png" width="100px" alt="Claude Idle"/>
-        <br />
-        <sub><b>Claude (待机)</b></sub>
-      </td>
-      <td align="center">
-        <img src="icon/claude2.png" width="100px" alt="Claude Session"/>
-        <br />
-        <sub><b>Claude (会话)</b></sub>
-      </td>
-      <td align="center">
-        <img src="icon/deepseek1.png" width="100px" alt="DeepSeek Idle"/>
-        <br />
-        <sub><b>DeepSeek (待机)</b></sub>
-      </td>
-      <td align="center">
-        <img src="icon/deepseek2.png" width="100px" alt="DeepSeek Session"/>
-        <br />
-        <sub><b>DeepSeek (会话)</b></sub>
-      </td>
-    </tr>
-  </table>
+<div align="center" style="display: flex; justify-content: center; gap: 20px; flex-wrap: wrap;">
+  <img src="icon/gemini1.png" width="100px" alt="Gemini Idle"/>
+  <img src="icon/gemini2.png" width="100px" alt="Gemini Session"/>
+  <img src="icon/openai1.png" width="100px" alt="OpenAI Idle"/>
+  <img src="icon/openai2.png" width="100px" alt="OpenAI Session"/>
+  <img src="icon/claude1.png" width="100px" alt="Claude Idle"/>
+  <img src="icon/claude2.png" width="100px" alt="Claude Session"/>
+  <img src="icon/deepseek1.png" width="100px" alt="DeepSeek Idle"/>
+  <img src="icon/deepseek2.png" width="100px" alt="DeepSeek Session"/>
 </div>
 
 欢迎使用 DeskAI 屏幕助手！本工具可以通过自定义快捷键，快速截屏或使用剪贴板内容，或将文件/文本拖至悬浮球，调用 AI 大模型进行文字识别、翻译或任何你指定的任务。本项目支持自定义记忆库，帮助你更个性化地完成工作！   
