@@ -47,19 +47,12 @@ class FloatingBall:
         self.window.config(bg=self.transparent_color)
         self.window.wm_attributes("-transparentcolor", self.transparent_color)
 
-        # --- 修正后的核心逻辑 ---
-
-        # 1. 确定路径并加载 Pillow 图片到内存
         if getattr(sys, 'frozen', False):
             base_path = sys._MEIPASS
         else:
             base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        # 1. 在 __init__ 中直接调用 set_icon_theme 来加载初始主题
-        #    这会确保 self.idle_pil_image 被正确赋值。
         self.set_icon_theme(initial_theme_prefix)
 
-        # 2. 现在，使用已经加载好的 self.idle_pil_image 来创建 self.label 控件
-        #    这是确保 self.label 在被使用前存在的关键一步。
         self.ball_image = ImageTk.PhotoImage(self.idle_pil_image)
         self.label = tk.Label(self.window, image=self.ball_image, bd=0, bg=self.transparent_color)
         self.label.pack()
@@ -393,7 +386,6 @@ class FloatingBall:
         # 使用一个小的 Frame 来模拟分割线
         ctk.CTkFrame(menu_frame, height=2, fg_color="#555555").pack(fill="x", padx=10, pady=5)
 
-        # --- 新增的重启和退出按钮 ---
         """ctk.CTkButton(menu_frame, text="重启", font=button_font, height=button_height, width=width,
                     fg_color="transparent", hover_color="#555555",
                     command=self.on_restart_callback).pack(fill="x", padx=10, pady=5)
@@ -421,7 +413,6 @@ class FloatingBall:
         if self.menu:
             self.menu.destroy()
             self.menu = None
-            # 将焦点还给悬浮球窗口
             self.window.focus_force()
     def show(self): self.window.deiconify()
     def hide(self):

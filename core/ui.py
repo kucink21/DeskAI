@@ -111,20 +111,18 @@ class ScreenshotTaker:
 class ResultWindow(tk.Toplevel):
     def __init__(self, ai_provider: 'BaseAIProvider', prompt: str, task_type: str, task_data):
         super().__init__()
-        self.ai_provider = ai_provider # <--- 修改
-        self.prompt = prompt           # <--- prompt现在由控制器构建好
+        self.ai_provider = ai_provider
+        self.prompt = prompt 
         self.task_type = task_type
         self.task_data = task_data
 
-        # self.screenshot_path 不再需要了，因为信息在 task_data 中
         self.chat_session = None
-        self.loaded_image = None # 仅在图片任务中被赋值
+        self.loaded_image = None
         self.timeout_job = None
         self.typewriter_job = None 
         
         self.setup_ui()
         
-        #  process_image_and_get_response 重命名为 process_initial_request
         threading.Thread(target=self.process_initial_request, daemon=True).start()
 
     def on_timeout(self):
@@ -146,7 +144,7 @@ class ResultWindow(tk.Toplevel):
         self._update_ui(error=error_message)
 
     def setup_ui(self):
-        self.title(" [Gemini对话窗口] --> 你可以发送消息继续这个聊天 :) ")
+        self.title(" [对话窗口] --> 你可以发送消息继续这个聊天 :) ")
         self.geometry("1200x1050")
         
         main_frame = ctk.CTkFrame(
@@ -276,9 +274,6 @@ class ResultWindow(tk.Toplevel):
                 # 1. 将新问题添加到历史记录中
                 self.chat_session["history"].append({'role': 'user', 'parts': [question]})
                 
-                # 2. OpenAI 无状态，所以我们调用主 generate_content 方法，并传入完整的历史
-                # (这是一个简化的实现，更复杂的需要 provider 提供 chat() 方法)
-                # 为了简单起见，我们这里重新构建一个 prompt 发送
                 history_text = "\n".join([f"{msg['role']}: {msg['parts'][0]}" for msg in self.chat_session['history']])
                 
                 # 我们将历史作为task_data发送，让provider来解析
@@ -289,15 +284,13 @@ class ResultWindow(tk.Toplevel):
                 )
                 # 3. 将模型的回复也添加到历史记录
                 self.chat_session["history"].append({'role': 'model', 'parts': [response_text]})
-            
-            # 如果是 Gemini 的原生 chat session
+
             else:
                 response = self.chat_session.send_message(
                     question,
                     request_options={"timeout": 15}
                 )
                 response_text = response.text.strip()
-            # --- 适配结束 ---
 
             self.after(0, self.display_message, response_text, False, True)
         
@@ -324,7 +317,8 @@ class ResultWindow(tk.Toplevel):
             self.text_area.insert(tk.END, f"\n\n[用户说]: \n", "user_tag")
             self.text_area.insert(tk.END, f"{message}\n")
         elif is_model:
-            self.text_area.insert(tk.END, f"\n[Gemini]: \n", "model_tag")
+            model_display_name = self.ai_provider.friendly_name
+            self.text_area.insert(tk.END, f"\n[{model_display_name}]: \n", "model_tag")
             if message:
                 self.start_typewriter(message) #启动打字机
         else:
@@ -371,8 +365,7 @@ class ResultWindow(tk.Toplevel):
         # --- 获取当前要处理的片段 ---
         text, tag = segments[segment_index]
         
-        # --- 核心优化：分块显示 ---
-        chunk_size = 3 # 一次显示3个字符
+        chunk_size = 4 # 一次显示
         
         # 如果是代码块，一次性显示整块，因为它不需要打字机效果
         if tag == "md_code":
@@ -389,7 +382,6 @@ class ResultWindow(tk.Toplevel):
                 self.text_area.insert(tk.END, chunk)
             self.text_area.see(tk.END)
 
-        # --- 计算下一步 ---
         next_char_index = end_of_chunk
         next_segment_index = segment_index
 
@@ -398,10 +390,8 @@ class ResultWindow(tk.Toplevel):
             next_segment_index += 1
             next_char_index = 0
             
-        # --- 核心优化：动态延迟 ---
         delay = 2 # 基础延迟
         
-        # 如果文本很长，加快后续速度
         total_len = sum(len(s[0]) for s in segments)
         if total_len > 300:
             # 已经显示了超过1/3后，速度翻倍（延迟减半）
@@ -409,7 +399,6 @@ class ResultWindow(tk.Toplevel):
             if current_len > total_len / 3:
                 delay = 1
 
-        # --- 安排下一步 ---
         self.typewriter_job = self.after(
             delay, 
             self._typewriter_step, 
@@ -447,21 +436,17 @@ class ResultWindow(tk.Toplevel):
         if error:
             log("update ui发生错误")
             # 如果有错误，显示错误信息
-            error_message = f"发生错误: {error} \n请检查网络连接和代理设置，以及API Key\n如果更新了API Key，请重启应用。"
+            error_message = f"发生错误: {error} \n请检查网络连接和代理设置，以及API Key\n如果更新了API Key，请重启应用。\n检测错误信息，如果显示账单和额度问题，请前往供应商官方网站检查您的API使用额度。"
             self.display_message(error_message)
-            # 也可以在这里弹窗，效果更强烈
             messagebox.showerror("API 调用失败", error_message)
             # 失败后依然启用输入框，让用户可以复制错误或关闭窗口
             self.enable_input()
         
         elif text:
             self.display_message(text, is_model=True)
-            
-            # --- 新的聊天会话构建逻辑 ---
-            # 我们可以简化历史构建，因为 provider 内部处理了具体内容
-            # 这里仅为示例，更复杂的历史构建可以在 provider 内部完成
+        
             history = [
-                {'role': 'user', 'parts': [self.prompt]}, # 简化历史
+                {'role': 'user', 'parts': [self.prompt]},
                 {'role': 'model', 'parts': [text]}
             ]
             self.chat_session = self.ai_provider.start_chat_session(history)

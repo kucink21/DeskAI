@@ -3,7 +3,7 @@
 import os
 import sys
 import json
-from .utils import log # 从同级目录的utils模块导入log
+from .utils import log 
 
 class ConfigManager:
     """负责加载和保存JSON配置文件"""

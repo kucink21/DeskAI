@@ -44,7 +44,7 @@ class TrayIcon:
             
         image = Image.open(self.icon_path)
         menu = self._create_menu()
-        self.icon = pystray.Icon("gemini_helper", image, "Gemini助手", menu)
+        self.icon = pystray.Icon("DeskAI", image, "DeskAI助手", menu)
         
         log("系统托盘图标已启动。")
         self.icon.run()

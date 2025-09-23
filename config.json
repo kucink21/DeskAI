@@ -1,7 +1,9 @@
 {
   "api_keys": {
-    "google_gemini": "your_google_gemini_api_key_here",
-    "openai": "your_openai_api_key_here"
+    "google_gemini": "Your-Gemini-API-Key-Here",
+    "openai": "Your-OpenAI-API-Key-Here",
+    "anthropic_claude": "Your-Anthropic-Claude-API-Key-Here",
+    "deepseek": "Your-DeepSeek-API-Key-Here"
   },
   "proxy_url": "",
   "actions": {

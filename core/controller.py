@@ -15,8 +15,10 @@ import tempfile
 import subprocess
 import importlib
 
-# 导入我们自己的模块
-from . import gemini_provider, openai_provider
+
+
+# 导入模块
+from . import openai_provider, gemini_provider, claude_provider, deepseek_provider
 from features.floating_ball import FloatingBall
 from features.instructions_window import InstructionsWindow
 from features.settings_window import SettingsWindow
@@ -27,8 +29,6 @@ from .config_manager import ConfigManager
 from .ui import ScreenshotTaker, ResultWindow
 from .utils import log, set_proxy, get_screen_scaling_factor
 
-from .gemini_provider import GeminiProvider
-from .openai_provider import OpenAIProvider
 
 # 主控制器 
 class MainController:
@@ -39,8 +39,7 @@ class MainController:
         self.user_memory = "" 
         self.config_manager = ConfigManager()
         self.config = {}
-        self.models_config = {} # 新增：存放 models.json 的内容
-        #self.gemini_model = None
+        self.models_config = {} 
         self.ai_provider = None 
         self.scaling_factor = 1.0
         self.current_pressed = set()
@@ -77,9 +76,8 @@ class MainController:
             executable_path = sys.executable
             
             temp_dir = tempfile.gettempdir()
-            batch_file_path = os.path.join(temp_dir, f"gemini_helper_restart_{os.getpid()}.bat")
+            batch_file_path = os.path.join(temp_dir, f"DeskAI_restart_{os.getpid()}.bat")
             
-            # 批处理脚本内容保持不变
             batch_script_content = f"""
     @echo off
     rem 等待2秒，确保旧进程和其临时文件夹已被清理
@@ -102,7 +100,6 @@ class MainController:
                 command_to_run,
                 cwd=temp_dir,
                 creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_CONSOLE
-                # close_fds=True # <--- 在Windows和DETACHED_PROCESS组合使用时移除此参数
             )
 
             self.exit_app()
@@ -122,10 +119,8 @@ class MainController:
             return False
         
         log(f"---------- {task_name} 开始 ----------")
-        # 1. 重新检查并设置代理
         set_proxy(self.config.get("proxy_url", ""))
         
-        # 2. 设置运行状态标志
         self.is_running_action = True
         return True
 
@@ -199,11 +194,11 @@ class MainController:
             
             provider_class_name = provider_info["provider_class"]
             
-            # --- 清理后的 Key 和 Model 获取逻辑 ---
             api_key_name_map = {
                 "google gemini": "google_gemini",
-                "openai": "openai"
-                # 未来在这里添加 "anthropic claude": "anthropic_claude"
+                "openai": "openai",
+                "anthropic claude": "anthropic_claude",
+                "deepseek": "deepseek"
             }
             api_key_name = api_key_name_map.get(selected_provider_name.lower())
 
@@ -228,7 +223,6 @@ class MainController:
             self.show_error_and_exit(f"AI模型初始化失败: {e}")
             return False
 
-        # --- 后续快捷键解析等逻辑保持不变 ---
         actions = self.config.get("actions", {})
         if not actions:
             self.show_error_and_exit("配置文件中未找到 'actions' 配置项。")
@@ -328,7 +322,7 @@ class MainController:
         SettingsWindow(
             self.root, 
             self.config, 
-            self.models_config, # <--- 新增
+            self.models_config,
             self.save_config_and_update
         )
 
@@ -339,12 +333,9 @@ class MainController:
         # 使用 ConfigManager 保存
         if not self.config_manager.save_json("config.json", new_config):
             messagebox.showerror("保存失败", "无法将设置写入到 config.json 文件。")
-            return
-
-        messagebox.showinfo(
-            "成功", 
-            "设置已保存！\n\n提示：模型、API Key、代理或快捷键的更改需要重启程序才能生效。"
-        )
+            return False
+        
+        return True # 返回 True 表示成功
     
     def create_widgets(self):
         """创建所有UI组件，并传入初始主题"""
@@ -446,7 +437,6 @@ class MainController:
         """干净地退出整个应用程序"""
         log("正在退出应用程序...")
         
-        # --- 新增的关键代码 ---
         if self.listener and self.listener.is_alive():
             log("正在停止键盘监听器...")
             self.listener.stop()
@@ -458,17 +448,14 @@ class MainController:
             self.floating_ball.destroy()
         if self.root:
             self.root.quit()
-            # self.root.destroy() # quit() 之后 mainloop 结束，destroy() 可能会引发错误
         
         log("应用程序已退出。")
         os._exit(0)
 
-    # 我们需要修改 show_error_and_exit
     def show_error_and_exit(self, message):
         """显示一个错误消息框，然后退出程序"""
         log(f"启动错误: {message.replace(os.linesep, ' ')}")
-        # 错误可能在主循环开始前发生，此时 messagebox 可能无法正常显示
-        # 创建一个临时root来显示错误
+
         temp_root = tk.Tk()
         temp_root.withdraw()
         messagebox.showerror("启动错误", message, parent=temp_root)
@@ -481,17 +468,14 @@ class MainController:
         
         self.user_memory = self.memory_manager.load_memory()
         
-        # 不在这里加载config，把所有配置加载都交给 setup_from_config
-        # self.config = self.config_manager.load_json("config.json") # <-- 可以删除
 
-        # setup_from_config 会负责加载并检查所有配置
         if not self.setup_from_config():
             return
 
         log("正在创建悬浮球和系统托盘...")
         self.create_widgets()
 
-        log("Gemini助手已启动，在后台等待快捷键...")
+        log("DeskAI助手已启动，在后台等待快捷键...")
         log("已注册的快捷键动作如下:")
         actions_config = self.config.get("actions", {})
         for name in self.hotkey_actions.keys():
@@ -675,7 +659,6 @@ class MainController:
         如果 prompt 为 None，则复用剪贴板的 prompt。
         """
         if prompt is None:
-            # 复用旧逻辑
             action_config = self.config["actions"].get("clipboard_text", {})
             prompt = action_config.get("prompt", "请分析以下文件内容:")
         final_prompt = self.build_prompt_with_memory(prompt)
@@ -795,20 +778,19 @@ class MainController:
         if self.floating_ball:
             self.floating_ball.set_session_state(True)
         result_win = ResultWindow(
-            ai_provider=self.ai_provider, # <--- 修改
+            ai_provider=self.ai_provider, 
             prompt=prompt,
             task_type=task_type,
             task_data=task_data
         )
         result_win.protocol("WM_DELETE_WINDOW", lambda: self.on_result_window_close(result_win))
 
-    # 修改 show_result_window_for_multimodal
     def show_result_window_for_multimodal(self, prompt, task_type, task_data_tuple):
         log("[LOG-C8-MM] show_result_window_for_multimodal 被调用。")
         if self.floating_ball:
             self.floating_ball.set_session_state(True)
         result_win = ResultWindow(
-            ai_provider=self.ai_provider, # <--- 修改
+            ai_provider=self.ai_provider,
             prompt=prompt,
             task_type=task_type,
             task_data=task_data_tuple

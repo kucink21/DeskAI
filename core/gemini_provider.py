@@ -46,7 +46,7 @@ class GeminiProvider(BaseAIProvider):
         这部分逻辑是从 ResultWindow 迁移过来的。
         """
         content_parts = [prompt]
-        task_type, data = task_data # 假设task_data是一个 (task_type, data) 的元组
+        task_type, data = task_data
 
         if task_type == 'pdf_multimodal':
             pdf_text, pdf_images = data

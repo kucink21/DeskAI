@@ -17,7 +17,6 @@ class OpenAIProvider(BaseAIProvider):
         log(f"正在初始化OpenAI Provider，模型: {self.model_name}")
         try:
             # OpenAI的Python库会自动从环境变量中读取代理
-            # 我们在 MainController 中已经通过 set_proxy 设置好了
             self.client = OpenAI(api_key=self.api_key)
             # 测试一下API Key是否有效
             self.client.models.list()
@@ -34,7 +33,7 @@ class OpenAIProvider(BaseAIProvider):
         response = self.client.chat.completions.create(
             model=self.model_name,
             messages=messages,
-            max_tokens=2048, # 可以根据需要调整
+            max_tokens=2048,
             timeout=timeout
         )
         return response.choices[0].message.content.strip()
@@ -51,12 +50,8 @@ class OpenAIProvider(BaseAIProvider):
         """构建发送给OpenAI的'messages'列表"""
         task_type, data = task_data
         
-        # OpenAI 的 messages 列表通常以 system prompt (如果有) 或 user prompt 开始
-        # 我们的 prompt 已经包含了记忆，是总的 user prompt
         user_content = []
 
-        # 1. 添加文本部分 (从我们的总 prompt 中提取)
-        # 简单的处理：我们假定 "---" 是记忆和任务的分隔符
         if "---" in prompt:
             parts = prompt.split("---", 1)
             system_context = parts[0].strip()

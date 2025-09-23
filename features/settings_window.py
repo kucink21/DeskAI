@@ -54,7 +54,7 @@ class SettingsWindow(ctk.CTkToplevel):
         # --- 通用设置 ---
         ctk.CTkLabel(scrollable_frame, text="通用设置", font=("微软雅黑", 16, "bold")).pack(anchor="w", pady=(10, 5))
         # --- 新增：模型选择下拉菜单 ---
-        ctk.CTkLabel(scrollable_frame, text="模型选择 (重启后生效)", font=("微软雅黑", 14, "bold")).pack(anchor="w", pady=(10, 5))
+        ctk.CTkLabel(scrollable_frame, text="模型选择 (重启后生效)", font=("微软雅黑", 16, "bold")).pack(anchor="w", pady=(10, 5))
         
         model_frame = ctk.CTkFrame(scrollable_frame, fg_color="transparent")
         model_frame.pack(fill="x", pady=5)
@@ -78,12 +78,19 @@ class SettingsWindow(ctk.CTkToplevel):
         initial_model = self.config_data.get("selected_model", "")
         if initial_model: self.model_combo.set(initial_model)
         # --- 新增代码结束 ---
-        # --- 新增：独立的API Keys区域 ---
+        # --- 2. 动态创建 API Keys 区域 (核心修改) ---
         ctk.CTkLabel(scrollable_frame, text="API Keys (重启后生效)", font=("微软雅黑", 16, "bold")).pack(anchor="w", pady=(20, 5))
-        self.create_entry(scrollable_frame, "Google Gemini", ["api_keys", "google_gemini"])
-        self.create_entry(scrollable_frame, "OpenAI", ["api_keys", "openai"])
-        # (未来可以继续在这里添加其他厂商的Key输入框)
-        # --- 新增代码结束 ---
+        
+        # 从 models_config 中获取所有提供商的友好名称
+        provider_names = self.models_config.get("providers", {}).keys()
+        
+        for provider_name in provider_names:
+            config_key = provider_name.lower().replace(" ", "_")
+            
+            # 动态地为每个提供商创建一个输入框
+            self.create_entry(scrollable_frame, provider_name, ["api_keys", config_key])
+
+        ctk.CTkLabel(scrollable_frame, text="代理端口", font=("微软雅黑", 16, "bold")).pack(anchor="w", pady=(20, 5))
         self.create_entry(scrollable_frame, "代理 URL", ["proxy_url"])
         proxy_info_label = ctk.CTkLabel(
             scrollable_frame, 

@@ -11,13 +11,18 @@ class BaseAIProvider(ABC):
     """
     def __init__(self, model_name: str, api_key: str):
         """
-        :param model_name: 此提供者实例将要使用的具体模型名称（例如 'gemini-1.5-flash-latest'）。
+        :param model_name: 此提供者实例将要使用的具体模型名称
         :param api_key: 用于此提供者的API密钥。
         """
         self.model_name = model_name
         self.api_key = api_key
-        self.model = None # 用于存放已初始化的模型对象
+        self.model = None
 
+    @property
+    def friendly_name(self) -> str:
+        """返回一个用于UI显示的、友好的模型名称。"""
+        return self.model_name
+    
     @abstractmethod
     def initialize_model(self, proxy_url: Optional[str] = None):
         """
