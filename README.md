@@ -5,14 +5,14 @@
 </p>
 
 <div align="center" style="display: flex; justify-content: center; gap: 20px; flex-wrap: wrap;">
-  <img src="icon/gemini1.png" width="100px" alt="Gemini Idle"/>
-  <img src="icon/gemini2.png" width="100px" alt="Gemini Session"/>
-  <img src="icon/openai1.png" width="100px" alt="OpenAI Idle"/>
-  <img src="icon/openai2.png" width="100px" alt="OpenAI Session"/>
-  <img src="icon/claude1.png" width="100px" alt="Claude Idle"/>
-  <img src="icon/claude2.png" width="100px" alt="Claude Session"/>
-  <img src="icon/deepseek1.png" width="100px" alt="DeepSeek Idle"/>
-  <img src="icon/deepseek2.png" width="100px" alt="DeepSeek Session"/>
+  <img src="icon/gemini1.png" width="90px" alt="Gemini Idle"/>
+  <img src="icon/gemini2.png" width="90px" alt="Gemini Session"/>
+  <img src="icon/openai1.png" width="90px" alt="OpenAI Idle"/>
+  <img src="icon/openai2.png" width="90px" alt="OpenAI Session"/>
+  <img src="icon/claude1.png" width="90px" alt="Claude Idle"/>
+  <img src="icon/claude2.png" width="90px" alt="Claude Session"/>
+  <img src="icon/deepseek1.png" width="90px" alt="DeepSeek Idle"/>
+  <img src="icon/deepseek2.png" width="90px" alt="DeepSeek Session"/>
 </div>
 
 欢迎使用 DeskAI 屏幕助手！本工具可以通过自定义快捷键，快速截屏或使用剪贴板内容，或将文件/文本拖至悬浮球，调用 AI 大模型进行文字识别、翻译或任何你指定的任务。本项目支持自定义记忆库，帮助你更个性化地完成工作！   
